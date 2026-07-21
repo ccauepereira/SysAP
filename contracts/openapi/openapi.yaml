@@ -1,0 +1,178 @@
+openapi: 3.1.1
+info:
+  title: API SysAP
+  version: 0.1.0
+  description: >-
+    Contrato da fundacao HTTP do SysAP. Nesta fase, somente saude e prontidao
+    estao disponiveis e ambos os endpoints sao publicos.
+servers:
+  - url: http://127.0.0.1:8080
+    description: API local em loopback
+security: []
+tags:
+  - name: Sistema
+    description: Estado tecnico do processo e de suas dependencias.
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags:
+        - Sistema
+      summary: Consultar saude do processo
+      description: >-
+        Confirma que o processo HTTP esta ativo sem consultar PostgreSQL ou
+        qualquer outra dependencia externa.
+      security: []
+      responses:
+        "200":
+          description: Processo da API em execucao.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                healthy:
+                  summary: Processo saudavel
+                  value:
+                    status: ok
+                    service: sysap-api
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags:
+        - Sistema
+      summary: Consultar prontidao da API
+      description: >-
+        Verifica o PostgreSQL com timeout curto. A API continua saudavel quando
+        o banco esta indisponivel, mas este endpoint responde 503.
+      security: []
+      responses:
+        "200":
+          description: API pronta e PostgreSQL acessivel.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              examples:
+                ready:
+                  summary: Banco disponivel
+                  value:
+                    status: ready
+                    service: sysap-api
+                    checks:
+                      database: up
+        "503":
+          description: API ativa, mas ainda nao pronta.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotReadyResponse"
+              examples:
+                databaseUnavailable:
+                  summary: Banco indisponivel
+                  value:
+                    error:
+                      code: service_not_ready
+                      message: service is not ready
+                      request_id: 0123456789abcdef0123456789abcdef
+components:
+  headers:
+    CacheControl:
+      description: Impede cache das respostas de saude e prontidao.
+      required: true
+      schema:
+        type: string
+        const: no-store
+      example: no-store
+    RequestID:
+      description: >-
+        Identificador hexadecimal gerado pelo servidor para correlacao da
+        requisicao. O caminho normal possui 32 caracteres; a contingencia pode
+        produzir um valor hexadecimal maior.
+      required: true
+      schema:
+        $ref: "#/components/schemas/RequestID"
+      example: 0123456789abcdef0123456789abcdef
+  schemas:
+    RequestID:
+      type: string
+      pattern: "^[0-9a-f]+$"
+      minLength: 32
+      description: Identificador hexadecimal opaco gerado pelo servidor.
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          const: ok
+        service:
+          type: string
+          const: sysap-api
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - service
+        - checks
+      properties:
+        status:
+          type: string
+          const: ready
+        service:
+          type: string
+          const: sysap-api
+        checks:
+          $ref: "#/components/schemas/ReadinessChecks"
+    ReadinessChecks:
+      type: object
+      additionalProperties: false
+      required:
+        - database
+      properties:
+        database:
+          type: string
+          const: up
+    NotReadyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/NotReadyError"
+    NotReadyError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - request_id
+      properties:
+        code:
+          type: string
+          const: service_not_ready
+        message:
+          type: string
+          const: service is not ready
+        request_id:
+          $ref: "#/components/schemas/RequestID"

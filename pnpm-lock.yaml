@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@redocly/cli':
+        specifier: 2.39.0
+        version: 2.39.0
       supabase:
         specifier: 2.109.1
         version: 2.109.1
@@ -561,6 +564,11 @@ packages:
 
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
+
+  '@redocly/cli@2.39.0':
+    resolution: {integrity: sha512-xA0Z9YMEhlzbpn/BVErlE2UzuKfahp9llBwEnVtAYuhWdF8UCIm+cgYX8f/gHQIJ/TKwB93awAewTOgEsbZFZw==}
+    engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
+    hasBin: true
 
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
@@ -2965,6 +2973,8 @@ snapshots:
   '@nolyfill/is-core-module@1.0.39': {}
 
   '@oxc-project/types@0.139.0': {}
+
+  '@redocly/cli@2.39.0': {}
 
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true

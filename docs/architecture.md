@@ -94,7 +94,8 @@ SysAP/
 │   ├── decisions/              # ADRs futuros
 │   └── codex/
 ├── AGENTS.md
-├── Makefile
+├── package.json              # comandos padronizados via pnpm
+├── scripts/                  # gates e orquestracao local
 └── README.md
 ```
 
@@ -348,8 +349,14 @@ Não criar módulo Wear OS no P0. O relógio conversa primeiro com o aplicativo 
 - API Go com configuração, logs, `/healthz`, `/readyz` e testes.
 - Next.js com shell visual e página de estado.
 - PostgreSQL/Supabase local, primeira migration e seed fictício.
-- OpenAPI inicial, Makefile, `.env.example` e CI.
+- OpenAPI inicial, comandos pnpm na raiz, `.env.example` e CI.
 - Resultado: tudo sobe localmente e os gates passam.
+
+Estado implementado em 21 de julho de 2026: fundacao PostgreSQL privada local,
+API Go com `healthz`/`readyz`, dashboard Next.js demonstrativo, contrato OpenAPI
+3.1, orquestracao Node sem shell, gates de dependencia/segredos e GitHub Actions
+sem deploy. Autenticacao e dados de negocio continuam reservados para as fases
+seguintes.
 
 ### Fase 2 — Identidade e atletas
 

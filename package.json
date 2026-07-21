@@ -3,6 +3,19 @@
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/dev-api.mjs",
+    "dev:web": "node scripts/dev-web.mjs",
+    "check": "node scripts/check.mjs",
+    "check:api": "node scripts/check-api.mjs",
+    "check:web": "node scripts/check-web.mjs",
+    "openapi:lint": "node scripts/openapi-lint.mjs",
+    "test": "node scripts/test.mjs",
+    "test:api": "node scripts/test-api.mjs",
+    "test:web": "pnpm --filter @sysap/web test",
+    "test:integration": "node scripts/integration.mjs",
+    "security:dependencies": "node scripts/audit-dependencies.mjs",
+    "security:secrets": "node scripts/scan-secrets.mjs",
     "db:start": "bash scripts/supabase-local.sh start",
     "db:stop": "bash scripts/supabase-local.sh stop",
     "db:status": "bash scripts/supabase-local.sh status",
@@ -11,6 +24,7 @@
     "db:lint": "bash scripts/supabase-local.sh lint"
   },
   "devDependencies": {
+    "@redocly/cli": "2.39.0",
     "supabase": "2.109.1"
   }
 }

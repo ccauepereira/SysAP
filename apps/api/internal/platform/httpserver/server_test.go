@@ -35,6 +35,10 @@ func TestHealthIsIndependentFromDatabase(t *testing.T) {
 		"status":  "ok",
 		"service": "sysap-api",
 	})
+	wantBody := "{\"status\":\"ok\",\"service\":\"sysap-api\"}\n"
+	if got := response.Body.String(); got != wantBody {
+		t.Fatalf("body = %q, want exact contract %q", got, wantBody)
+	}
 	assertCommonHeaders(t, response)
 }
 

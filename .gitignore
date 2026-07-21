@@ -24,6 +24,9 @@ id_ed25519*
 **/*.log
 /.sysap-supabase.*
 /.sysap-api.*
+/.sysap-runtime/
+/.sysap-reports/
+*.pid
 
 # Local database artifacts
 **/*.dump

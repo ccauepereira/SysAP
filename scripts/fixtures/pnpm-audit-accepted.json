@@ -1,0 +1,22 @@
+{
+  "advisories": {
+    "1000001": {
+      "github_advisory_id": "GHSA-qx2v-qp2m-jg93",
+      "module_name": "postcss",
+      "severity": "moderate",
+      "findings": [
+        {
+          "version": "8.4.31",
+          "paths": ["apps__web>next>postcss"]
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "moderate": 1,
+      "high": 0,
+      "critical": 0
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "advisories": {
+    "1000002": {
+      "github_advisory_id": "GHSA-0000-0000-0000",
+      "module_name": "fixture-package",
+      "severity": "high",
+      "findings": [
+        {
+          "version": "1.0.0",
+          "paths": ["fixture-package"]
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "moderate": 0,
+      "high": 1,
+      "critical": 0
+    }
+  }
+}

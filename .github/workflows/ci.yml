@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sysap-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  DO_NOT_TRACK: "1"
+  REDOCLY_TELEMETRY: "off"
+  REDOCLY_SUPPRESS_UPDATE_NOTICE: "true"
+  NO_UPDATE_NOTIFIER: "1"
+
+jobs:
+  policy:
+    name: Politicas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: Validar politicas estaticas
+        run: node scripts/repository-policy.mjs
+
+  secrets:
+    name: Segredos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout completo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.15.1
+          run_install: false
+      - name: Verificar estado atual e historico
+        run: pnpm security:secrets
+
+  api:
+    name: API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.15.1
+          run_install: false
+      - name: Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.5
+          check-latest: false
+      - name: Verificar API
+        run: pnpm check:api
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.15.1
+          run_install: false
+      - name: Instalar sem lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verificar Web
+        run: pnpm check:web
+      - name: Auditar dependencias
+        run: pnpm security:dependencies
+
+  contract:
+    name: Contrato OpenAPI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.15.1
+          run_install: false
+      - name: Instalar sem lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Validar contrato local
+        run: pnpm openapi:lint
+
+  integration:
+    name: Integracao local
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          check-latest: false
+      - name: pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.15.1
+          run_install: false
+      - name: Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.5
+          check-latest: false
+      - name: Instalar sem lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Confirmar Docker
+        run: docker info --format '{{.ServerVersion}}'
+      - name: Executar integracao real
+        run: pnpm test:integration
+      - name: Limpeza obrigatoria
+        if: always()
+        run: pnpm db:stop

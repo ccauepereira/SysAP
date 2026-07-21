@@ -1,0 +1,16 @@
+apis:
+  sysap@v1:
+    root: contracts/openapi/openapi.yaml
+
+extends:
+  - recommended
+
+rules:
+  info-license: off
+  operation-4xx-response: off
+  operation-operationId: error
+  operation-singular-tag: error
+  operation-tag-defined: error
+  operation-description: error
+  no-invalid-media-type-examples: error
+  no-invalid-schema-examples: error
