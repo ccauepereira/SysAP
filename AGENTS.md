@@ -11,7 +11,8 @@ Leia antes de alterar código:
 1. `docs/architecture.md` — arquitetura, escopo e prioridades.
 2. `contracts/openapi/` — contrato HTTP quando existir.
 3. `infra/supabase/migrations/` — modelo persistido.
-4. O prompt da tarefa atual — objetivo e limite da entrega.
+4. `assets/brand/README.md` — identidade visual e regras da marca.
+5. O prompt da tarefa atual — objetivo e limite da entrega.
 
 Se houver conflito, pare e explique o conflito. Não mude uma decisão arquitetural silenciosamente.
 
@@ -55,6 +56,8 @@ Se houver conflito, pare e explique o conflito. Não mude uma decisão arquitetu
 - Dinheiro, distância, velocidade e duração devem ter unidades explícitas.
 - Evite pacote `utils`; nomeie código pela responsabilidade.
 - Não adicione dependência sem justificar sua necessidade e verificar manutenção/licença.
+- Não redesenhe, recolora, distorça ou aplique efeitos à logo oficial. Use o arquivo canônico em `assets/brand/`.
+- Use os tokens da marca e respeite contraste; texto sobre fundo dourado deve ser escuro.
 - Nunca coloque chaves, tokens, dados pessoais ou arquivos reais de atletas no Git.
 - Seeds devem ser claramente fictícios.
 - Toda migration deve ter estratégia de rollback ou explicação de irreversibilidade.
@@ -74,4 +77,3 @@ Antes de finalizar, revise o diff e informe qualquer teste que não pôde ser ex
 ## Definição de pronto
 
 Uma tarefa só está pronta quando o comportamento solicitado funciona, há teste proporcional ao risco, os comandos relevantes passam, a documentação afetada foi atualizada e nenhuma parte fora do escopo foi implementada.
-

@@ -13,6 +13,7 @@ Projeto em fase de arquitetura e preparação do repositório.
 - [Arquitetura do sistema](docs/architecture.md)
 - [Prompt inicial de implementação para o Codex](docs/codex/IMPLEMENTATION_PROMPT.md)
 - [Instruções permanentes para agentes](AGENTS.md)
+- [Identidade visual e uso da logo](assets/brand/README.md)
 
 ## Stack aprovada para o MVP
 
@@ -23,7 +24,10 @@ Projeto em fase de arquitetura e preparação do repositório.
 - Smartwatch: integração indireta por Health Connect.
 - Colete GPS: importação de arquivo exportado pelo fabricante.
 
+## Identidade visual
+
+A identidade do produto parte da marca Artur Performance: superfícies escuras, branco e detalhes dourados. A logo oficial, sem alterações, fica em `assets/brand/artur-performance-logo.png`.
+
 ## Regra de produto
 
 O MVP não terá GPS em tempo real, diagnóstico médico, previsão de lesão, xG, detecção automática de toques na bola ou integração inventada com um fabricante. Cada nova integração de colete só começa depois da obtenção de um arquivo real e de sua documentação.
-

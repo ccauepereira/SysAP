@@ -282,6 +282,10 @@ O painel segue a linguagem visual escura do protótipo, mas a arquitetura da int
 
 Usar Server Components por padrão e Client Components apenas para interação, gráficos e mapas. Chamadas à API devem passar por uma camada tipada. Estados de carregamento, vazio, erro, sem permissão e dados insuficientes fazem parte da definição de pronto.
 
+### Identidade visual
+
+A logo canônica é `assets/brand/artur-performance-logo.png`, em PNG transparente. O produto usa superfícies escuras, branco e dourado. Os tokens iniciais estão documentados em `assets/brand/README.md`; o dourado principal é `#D4AE29`. Elementos dourados usam texto escuro para contraste. A logo não pode ser redesenhada, recolorida, distorcida ou receber efeitos adicionais.
+
 ## 11. Aplicativo Android
 
 O aplicativo do atleta será Android nativo com:

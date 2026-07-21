@@ -18,7 +18,8 @@ Contexto obrigatório
 1. Leia integralmente `AGENTS.md` e `docs/architecture.md` antes de propor qualquer alteração.
 2. Inspecione todo o repositório e confirme o estado atual.
 3. A fonte de verdade do escopo é a seção “Fase 1 — Fundação executável” da arquitetura.
-4. O projeto é conduzido por um estudante que precisa entender o código. Prefira soluções simples, explícitas e fáceis de explicar.
+4. Leia `assets/brand/README.md` e use `assets/brand/artur-performance-logo.png` como a única logo oficial.
+5. O projeto é conduzido por um estudante que precisa entender o código. Prefira soluções simples, explícitas e fáceis de explicar.
 
 Escopo desta execução
 
@@ -33,6 +34,8 @@ Escopo desta execução
   - testes dos endpoints e da configuração.
 - Inicializar `apps/web` com Next.js App Router, TypeScript e gerenciador pnpm, com:
   - layout inicial acessível;
+  - identidade visual escura baseada nos tokens oficiais da marca;
+  - uso da logo original, copiada para o local público apropriado sem alteração visual;
   - página “Estado do sistema” consumindo a API;
   - estados de carregamento, indisponibilidade e sucesso;
   - lint, typecheck, testes essenciais e build.
@@ -50,6 +53,8 @@ Limites obrigatórios
 
 - Não implemente autenticação, atletas, turmas, presença, prontidão, feedback, GPS, heatmap, Health Connect ou dashboard de negócio nesta execução.
 - Não crie dados falsos apresentados como reais.
+- Não redesenhe, recolora, distorça, recorte ou aplique efeitos à logo oficial.
+- Não use texto branco sobre o dourado principal quando isso reprovar contraste; siga o guia da marca.
 - Não invente formato de arquivo de colete GPS.
 - Não adicione rastreamento ao vivo, IA, microsserviços, Redis, Kafka, Kubernetes ou mensageria externa.
 - Não acesse Supabase remoto, não faça deploy e não solicite segredos reais.
@@ -107,4 +112,3 @@ Ao terminar, responda em português com:
 6. Só depois de executar localmente e revisar, faça commit da Fase 1.
 
 O próximo prompt deve ser criado apenas depois dessa fundação passar nos testes. Ele tratará a Fase 2 como um corte vertical: autenticação, organização, primeiro atleta e primeira tela real.
-
