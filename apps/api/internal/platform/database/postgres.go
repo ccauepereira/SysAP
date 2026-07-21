@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,7 +23,17 @@ type Pool struct {
 // NewPool parses the connection configuration without contacting PostgreSQL.
 // Connectivity is checked only when Ping is called by the readiness handler.
 func NewPool(ctx context.Context, databaseURL string) (*Pool, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	configuration, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	configuration.AfterConnect = func(ctx context.Context, connection *pgx.Conn) error {
+		_, err := connection.Exec(ctx, "set role sysap_api")
+		return err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, configuration)
 	if err != nil {
 		return nil, err
 	}

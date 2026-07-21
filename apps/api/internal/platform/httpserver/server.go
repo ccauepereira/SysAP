@@ -90,8 +90,8 @@ func (h *handler) readiness(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, readinessResponse{
 		Status:  "ready",
 		Service: "sysap-api",
-		Dependencies: dependenciesResponse{
-			Database: "ready",
+		Checks: checksResponse{
+			Database: "up",
 		},
 	})
 }
@@ -107,12 +107,12 @@ type healthResponse struct {
 }
 
 type readinessResponse struct {
-	Status       string               `json:"status"`
-	Service      string               `json:"service"`
-	Dependencies dependenciesResponse `json:"dependencies"`
+	Status  string         `json:"status"`
+	Service string         `json:"service"`
+	Checks  checksResponse `json:"checks"`
 }
 
-type dependenciesResponse struct {
+type checksResponse struct {
 	Database string `json:"database"`
 }
 

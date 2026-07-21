@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -49,18 +50,27 @@ func TestReadinessReportsAvailableDatabase(t *testing.T) {
 	assertJSON(t, response, map[string]any{
 		"status":  "ready",
 		"service": "sysap-api",
-		"dependencies": map[string]any{
-			"database": "ready",
+		"checks": map[string]any{
+			"database": "up",
 		},
 	})
+	wantBody := "{\"status\":\"ready\",\"service\":\"sysap-api\",\"checks\":{\"database\":\"up\"}}\n"
+	if got := response.Body.String(); got != wantBody {
+		t.Fatalf("body = %q, want exact contract %q", got, wantBody)
+	}
 	if database.deadline.Before(startedAt.Add(200 * time.Millisecond)) {
 		t.Fatalf("database ping deadline = %v, want configured timeout", database.deadline)
 	}
 }
 
 func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
-	databaseURL := "postgresql://user:secret@example.invalid"
-	database := &checkerStub{err: errors.New(databaseURL)}
+	fixtureURL := (&url.URL{
+		Scheme: "postgresql",
+		User:   url.UserPassword("fixture-user", "fixture-password"),
+		Host:   "database.example.invalid",
+		Path:   "/fixture-database",
+	}).String()
+	database := &checkerStub{err: errors.New(fixtureURL)}
 	var logOutput bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
 	handler := newHandler(database, logger, time.Second, fixedRequestID)
@@ -80,10 +90,10 @@ func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
 	if got := response.Body.String(); got != wantBody {
 		t.Fatalf("body = %q, want exact contract %q", got, wantBody)
 	}
-	if bytes.Contains(response.Body.Bytes(), []byte(databaseURL)) {
+	if bytes.Contains(response.Body.Bytes(), []byte(fixtureURL)) {
 		t.Fatal("response exposed the database error")
 	}
-	if bytes.Contains(logOutput.Bytes(), []byte(databaseURL)) {
+	if bytes.Contains(logOutput.Bytes(), []byte(fixtureURL)) {
 		t.Fatal("log exposed the database error")
 	}
 	assertCommonHeaders(t, response)

@@ -1,0 +1,56 @@
+project_id = "sysap"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+[db.migrations]
+enabled = true
+schema_paths = ["./migrations/*.sql"]
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+enabled = false
+port = 54323
+
+[inbucket]
+enabled = false
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[storage]
+enabled = false
+
+[auth]
+enabled = false
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = []
+enable_signup = false
+
+[realtime]
+enabled = false
+ip_version = "IPv4"
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+port = 54327
+vector_port = 54328
+

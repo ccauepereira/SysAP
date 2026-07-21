@@ -1,0 +1,16 @@
+{
+  "name": "sysap",
+  "private": true,
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "db:start": "bash scripts/supabase-local.sh start",
+    "db:stop": "bash scripts/supabase-local.sh stop",
+    "db:status": "bash scripts/supabase-local.sh status",
+    "db:env": "bash scripts/supabase-local.sh env",
+    "db:reset": "bash scripts/supabase-local.sh reset",
+    "db:lint": "bash scripts/supabase-local.sh lint"
+  },
+  "devDependencies": {
+    "supabase": "2.109.1"
+  }
+}

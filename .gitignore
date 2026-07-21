@@ -1,0 +1,31 @@
+# JavaScript dependencies and local stores
+node_modules/
+.pnpm-store/
+
+# Local environment and package-manager credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+.pnpmrc
+
+# Private keys and SSH identities
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Supabase local state and credentials
+**/.temp/
+**/.branches/
+**/*project-ref*
+**/*credential*
+**/*.log
+/.sysap-supabase.*
+/.sysap-api.*
+
+# Local database artifacts
+**/*.dump
+**/*.backup
+**/*.bak

@@ -1,0 +1,10 @@
+.temp/
+.branches/
+.env
+.env.*
+*.log
+*.dump
+*.backup
+*.bak
+*project-ref*
+*credential*
