@@ -2,6 +2,9 @@
 node_modules/
 .pnpm-store/
 
+# Configurações locais do VS Code
+/.vscode/
+
 # Local environment and package-manager credentials
 .env
 .env.*

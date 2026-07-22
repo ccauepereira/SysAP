@@ -37,10 +37,18 @@ pop3_port = 54326
 enabled = false
 
 [auth]
-enabled = false
+enabled = true
 site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = []
 enable_signup = false
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = false
+
+[auth.sms]
+enable_signup = false
+test_otp = { "12025550123" = "123456" }
 
 [realtime]
 enabled = false
