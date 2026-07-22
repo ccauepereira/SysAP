@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
 
+overrides:
+  "next@16.2.10>sharp": "0.35.3"
+
 minimumReleaseAge: 10080
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
@@ -10,4 +13,3 @@ allowBuilds: {}
 verifyDepsBeforeRun: error
 nodeVersion: 24.18.0
 engineStrict: true
-
