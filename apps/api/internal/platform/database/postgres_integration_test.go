@@ -143,7 +143,19 @@ func TestPostgresFoundation(t *testing.T) {
 			from information_schema.table_privileges
 			where table_schema = 'app'
 			  and grantee = 'sysap_api'
-			  and not (table_name = 'bootstrap_metadata' and privilege_type = 'SELECT')
+			  and not (
+			    (table_name = 'bootstrap_metadata' and privilege_type = 'SELECT') or
+			    (table_name = 'organizations' and privilege_type in ('SELECT', 'UPDATE')) or
+			    (table_name = 'profiles' and privilege_type in ('SELECT', 'UPDATE')) or
+			    (table_name = 'organization_memberships' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'athletes' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'trainer_athlete_assignments' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'athlete_invitations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'identity_operations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'outbox_events' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'security_audit_events' and privilege_type in ('SELECT', 'INSERT'))
+			  )
 		`, &unexpectedAPIGrants)
 		scanRowWithArguments(t, adminPool, ctx, `
 			select count(*)

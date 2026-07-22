@@ -47,7 +47,7 @@ func TestPhase2BIdentity(t *testing.T) {
 		}
 		for _, table := range tables {
 			var rlsEnabled, forceRls bool
-			scanRow(t, adminPool, ctx, `
+			scanRowWithArguments(t, adminPool, ctx, `
 				select c.relrowsecurity, c.relforcerowsecurity
 				from pg_class c
 				join pg_namespace n on n.oid = c.relnamespace
@@ -64,9 +64,63 @@ func TestPhase2BIdentity(t *testing.T) {
 			from information_schema.columns
 			where table_schema = 'app'
 			  and column_name in ('password', 'passwd', 'otp', 'totp', 'token', 'access_token', 'refresh_token', 'secret')
-		`, nil, &secretColumns)
+		`, &secretColumns)
 		if secretColumns > 0 {
 			t.Fatal("Schema app contains forbidden secret columns")
+		}
+
+		expectedGrants := map[string][]string{
+			"organizations":               {"SELECT", "UPDATE"},
+			"profiles":                    {"SELECT", "UPDATE"},
+			"organization_memberships":    {"SELECT", "INSERT", "UPDATE"},
+			"athletes":                    {"SELECT", "INSERT", "UPDATE"},
+			"trainer_athlete_assignments": {"SELECT", "INSERT", "UPDATE"},
+			"athlete_invitations":         {"SELECT", "INSERT", "UPDATE"},
+			"identity_operations":         {"SELECT", "INSERT", "UPDATE"},
+			"outbox_events":               {"SELECT", "INSERT", "UPDATE"},
+			"idempotency_records":         {"SELECT", "INSERT", "UPDATE"},
+			"security_audit_events":       {"SELECT", "INSERT"},
+			"bootstrap_metadata":          {"SELECT"},
+		}
+		for table, expected := range expectedGrants {
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+				var hasPriv bool
+				scanRowWithArguments(t, adminPool, ctx,
+					"select has_table_privilege('sysap_api', 'app.' || $1::text, $2)",
+					[]any{table, privilege}, &hasPriv)
+
+				shouldHave := false
+				for _, ep := range expected {
+					if strings.EqualFold(ep, privilege) {
+						shouldHave = true
+						break
+					}
+				}
+				if hasPriv != shouldHave {
+					t.Fatalf("Table %s privilege %s for sysap_api = %v, want %v", table, privilege, hasPriv, shouldHave)
+				}
+			}
+		}
+
+		expectedFunctions := []string{"current_tenant_id()", "contains_forbidden_keys(jsonb, integer)"}
+		for _, fn := range expectedFunctions {
+			var apiCanExecute bool
+			scanRowWithArguments(t, adminPool, ctx,
+				"select has_function_privilege('sysap_api', 'app.' || $1::text, 'execute')",
+				[]any{fn}, &apiCanExecute)
+			if !apiCanExecute {
+				t.Fatalf("sysap_api must have EXECUTE privilege on %s", fn)
+			}
+
+			for _, role := range []string{"anon", "authenticated", "service_role"} {
+				var clientCanExecute bool
+				scanRowWithArguments(t, adminPool, ctx,
+					"select has_function_privilege($1, 'app.' || $2::text, 'execute')",
+					[]any{role, fn}, &clientCanExecute)
+				if clientCanExecute {
+					t.Fatalf("Role %s must not have EXECUTE privilege on %s", role, fn)
+				}
+			}
 		}
 	})
 
@@ -128,11 +182,14 @@ func TestPhase2BIdentity(t *testing.T) {
 
 	t.Run("Tenant Isolation", func(t *testing.T) {
 		txAdmin, _ := adminPool.Begin(ctx)
-		defer txAdmin.Rollback(ctx)
-
 		var orgA, orgB string
 		txAdmin.QueryRow(ctx, "insert into app.organizations (name, timezone, status) values ('Org A', 'America/Fortaleza', 'active') returning id").Scan(&orgA)
 		txAdmin.QueryRow(ctx, "insert into app.organizations (name, timezone, status) values ('Org B', 'America/Fortaleza', 'active') returning id").Scan(&orgB)
+		txAdmin.Commit(ctx)
+
+		defer func() {
+			adminPool.Exec(ctx, "delete from app.organizations where id in ($1, $2)", orgA, orgB)
+		}()
 
 		tx, _ := pool.pool.Begin(ctx)
 		defer tx.Rollback(ctx)
@@ -163,9 +220,14 @@ func TestPhase2BIdentity(t *testing.T) {
 
 	t.Run("Security Audit Recursive JSON", func(t *testing.T) {
 		txAdmin, _ := adminPool.Begin(ctx)
-		defer txAdmin.Rollback(ctx)
 		var orgA string
 		txAdmin.QueryRow(ctx, "insert into app.organizations (name, timezone, status) values ('Org A', 'UTC', 'active') returning id").Scan(&orgA)
+		txAdmin.Commit(ctx)
+
+		defer func() {
+			adminPool.Exec(ctx, "delete from app.security_audit_events where organization_id = $1", orgA)
+			adminPool.Exec(ctx, "delete from app.organizations where id = $1", orgA)
+		}()
 
 		tx, _ := pool.pool.Begin(ctx)
 		defer tx.Rollback(ctx)
@@ -220,7 +282,7 @@ func TestPhase2BIdentity(t *testing.T) {
 		// Setup 2 concurrent transactions attempting to suspend/demote
 		var wg sync.WaitGroup
 		wg.Add(2)
-		
+
 		results := make(chan error, 2)
 		ready := make(chan struct{})
 
@@ -231,7 +293,7 @@ func TestPhase2BIdentity(t *testing.T) {
 			defer conn1.Release()
 			tx1, _ := conn1.Begin(ctx)
 			defer tx1.Rollback(ctx)
-			
+
 			<-ready // Wait for coordination
 			_, err := tx1.Exec(ctx, "update app.organization_memberships set status = 'suspended' where id = $1", ownerA)
 			if err == nil {
@@ -247,7 +309,7 @@ func TestPhase2BIdentity(t *testing.T) {
 			defer conn2.Release()
 			tx2, _ := conn2.Begin(ctx)
 			defer tx2.Rollback(ctx)
-			
+
 			<-ready // Wait for coordination
 			_, err := tx2.Exec(ctx, "update app.organization_memberships set role = 'trainer' where id = $1", ownerB)
 			if err == nil {
