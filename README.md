@@ -16,7 +16,7 @@ flowchart LR
     T["Artur / treinador"] --> W["Web Next.js"]
     W --> A["API Go"]
     A --> P["PostgreSQL local"]
-    F["Android Kotlin futuro"] --> A
+    F["Mobile Flutter futuro\nAndroid e iOS"] --> A
 ```
 
 Clientes consultam dados de negocio somente pela API. O Web nao acessa tabelas
@@ -27,6 +27,7 @@ PostgreSQL diretamente.
 ```text
 apps/api/             API Go em monolito modular
 apps/web/             dashboard responsivo do treinador
+apps/mobile/          Flutter/Dart + adapters Kotlin/Swift futuros (ainda ausente)
 assets/brand/         identidade visual canonica
 contracts/openapi/    contrato HTTP da API
 docs/                 arquitetura, design e seguranca
@@ -35,8 +36,10 @@ scripts/              orquestracao e gates locais
 .github/workflows/    CI sem deploy
 ```
 
-O aplicativo Android nativo, em Kotlin e Jetpack Compose, sera criado em fase
-posterior para o atleta. Nao existe aplicativo de smartwatch no MVP.
+O aplicativo futuro usara Flutter/Dart para Android e iOS. Kotlin ficara apenas
+atras de adapters Android, como Health Connect, e Swift atras de adapters Apple,
+como HealthKit. `apps/mobile` ainda nao foi criado. Nao existe aplicativo de
+smartwatch no MVP.
 
 ## Pre-requisitos
 
@@ -147,8 +150,10 @@ tudo mesmo em falha.
 
 ## OpenAPI
 
-O contrato local esta em `contracts/openapi/openapi.yaml` e descreve somente
-`/healthz` e `/readyz`:
+O contrato local esta em `contracts/openapi/openapi.yaml`. `/healthz` e
+`/readyz` sao os unicos endpoints implementados; os contratos de identidade sob
+`/v1` estao marcados como planejados pela Subfase 2A e ainda nao representam
+funcionalidade disponivel:
 
 ```sh
 pnpm openapi:lint
@@ -165,9 +170,10 @@ e pode conter credencial exclusivamente local; ele nunca e carregado com
 `source` ou `eval`.
 
 Segredos de producao pertencem a um gerenciador de segredos, nunca a arquivos
-versionados. Uma futura chave publicavel pode existir no cliente apenas quando
-o desenho de autenticacao autorizar. `service_role`, secret key, senha e URL do
-banco jamais podem entrar no browser, Android ou Git.
+versionados. A arquitetura da Fase 2 nao distribui configuracao ou publishable
+key do Supabase aos clientes: Web/mobile autenticam somente pela API Go.
+`service_role`, secret key, credencial Twilio, senha e URL do banco jamais podem
+entrar no browser, mobile ou Git.
 
 Variaveis usadas nesta fase:
 
@@ -212,8 +218,9 @@ credenciais para o Git.
 A proxima fase tratara identidade, organizacao e primeiro atleta como um corte
 vertical separado. Turmas, presencas, prontidao real e feedback virao depois.
 GPS sera importado apenas apos o treino; nenhum parser de fabricante sera criado
-sem arquivo real e documentacao. Health Connect vira com consentimento granular
-no Android. Nao ha rastreamento ao vivo nem app de smartwatch no MVP.
+sem arquivo real e documentacao. Health Connect e HealthKit virao com
+consentimento granular por adapters Kotlin/Swift do app Flutter. Nao ha
+rastreamento ao vivo nem app de smartwatch no MVP.
 
 Prontidao e carga sao informacoes de apoio ao treinador, nao diagnostico medico
 nem previsao de lesao. O SysAP nao infere gol, passe, assistencia, toque na bola

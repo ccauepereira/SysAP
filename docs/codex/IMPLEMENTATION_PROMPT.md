@@ -1,5 +1,11 @@
 # Prompt inicial para implementar o SysAP com Codex
 
+> **Documento histórico da Fase 1.** As referências abaixo a `apps/android` e
+> aplicativo exclusivamente Kotlin foram substituídas pelo
+> [ADR 0002](../architecture/decisions/0002-cross-platform-mobile.md): o futuro
+> app fica em `apps/mobile` com Flutter/Dart e adapters Kotlin/Swift. Não reutilize
+> a decisão mobile deste prompt em fases novas.
+
 Use este texto como primeira tarefa do Codex no repositório. Ele implementa somente a **Fase 1 — Fundação executável**. Não tente gerar o produto completo em uma única execução.
 
 ---

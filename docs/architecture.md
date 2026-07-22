@@ -1,8 +1,8 @@
 # Arquitetura do SysAP
 
-**Status:** proposta aprovada para implementação incremental  
-**Versão:** 0.1  
-**Data:** 21 de julho de 2026
+**Status:** proposta aprovada para implementação incremental
+**Versão:** 0.2
+**Data:** 22 de julho de 2026
 
 ## 1. Visão do produto
 
@@ -23,7 +23,8 @@ O valor do MVP não é “ter IA”. É converter dados reais em informações c
 3. Criação de treino e controle de presença.
 4. Check-in de prontidão e feedback mensal do treinador.
 5. Importação pós-treino de arquivo de colete GPS.
-6. Sincronização autorizada de treino pelo Android/Health Connect.
+6. Sincronização autorizada de treino pelo mobile: Health Connect no Android e
+   HealthKit no iOS.
 7. Resumo de sessão: duração, distância, velocidade, frequência cardíaca disponível, carga e sprints disponíveis.
 8. Caminho normalizado no campo e mapa de calor.
 9. Histórico e totais por semana, mês e ano.
@@ -44,11 +45,12 @@ O valor do MVP não é “ter IA”. É converter dados reais em informações c
 |---|---|---|
 | Repositório | Monorepo | Mantém contrato, aplicações, infraestrutura e documentação sincronizados. |
 | Backend | Go em monólito modular | Operação simples no MVP, módulos claros e possibilidade de extração futura. |
-| API | REST com OpenAPI | Contrato único para web, Android, testes e documentação. |
+| API | REST com OpenAPI | Contrato único para Web, mobile, testes e documentação. |
 | Web | Next.js App Router + TypeScript | Painel responsivo do treinador com tipagem e ecossistema maduro. |
-| Android | Kotlin + Jetpack Compose | Integração nativa com permissões e Health Connect. |
+| Mobile | Flutter + Dart, com adapters Kotlin/Swift | UI compartilhada Android/iOS e acesso nativo explícito a Health Connect/HealthKit. |
 | Banco | PostgreSQL gerenciado pelo Supabase | Banco relacional, migrations SQL e baixo custo operacional inicial. |
-| Identidade | Supabase Auth | Sessões e emissão de JWT sem construir autenticação própria. |
+| Identidade | Supabase Auth atrás da API Go | Senha, OTP, TOTP, sessões e JWT sem autenticação própria; clientes tratam tokens como opacos e não chamam Auth. |
+| OTP SMS | Twilio Verify via `twilio_verify` do Supabase Auth | Provider inicial substituível, sem SDK/chamada Twilio em API, Web ou mobile. |
 | Arquivos | Supabase Storage | Arquivos brutos do GPS e artefatos de importação fora do banco. |
 | Processamento | Worker no mesmo projeto Go, usando fila em PostgreSQL | Evita adotar mensageria externa antes da necessidade. |
 | Inteligência | Regras determinísticas e versionadas | Resultados explicáveis mesmo com pouco histórico. |
@@ -60,19 +62,26 @@ As versões exatas de runtime e dependências devem ser fixadas no bootstrap usa
 ```mermaid
 flowchart TB
     Coach["Treinador"] --> Web["Painel Web\nNext.js"]
-    Athlete["Atleta"] --> Android["App Android\nKotlin"]
-    Watch["Smartwatch e app do fabricante"] --> HC["Health Connect"]
-    HC --> Android
+    Athlete["Atleta"] --> Mobile["App mobile\nFlutter"]
+    Watch["Smartwatch e app do fabricante"] --> Health["Health Connect / HealthKit"]
+    Health --> Native["Adapters Kotlin / Swift"]
+    Native --> Mobile
     Vest["Colete GPS"] --> Export["Arquivo exportado"]
     Export --> Web
     Web --> API["API e Worker\nGo"]
-    Android --> API
+    Mobile --> API
     API --> Auth["Supabase Auth"]
+    Auth --> SMS["Twilio Verify\nprovider twilio_verify"]
     API --> DB["PostgreSQL"]
     API --> Storage["Supabase Storage"]
 ```
 
-Não existe comunicação direta do painel ou do Android com tabelas de negócio. Os clientes podem usar o SDK do Supabase para o fluxo de autenticação, mas toda regra e dado do SysAP passam pela API.
+Não existe comunicação direta do painel ou do mobile com tabelas de negócio ou
+com o Supabase Auth. Inclusive autenticação passa pela API Go. O Next.js atua
+como BFF e o mobile usa o mesmo contrato; nenhum cliente recebe credencial
+administrativa ou decide papel/organização. URL e publishable key do Auth são
+tratadas como descobríveis, não como controle de segurança; signup desligado,
+limites Auth/provider e controles de gateway complementam a API.
 
 ## 4. Estrutura do monorepo
 
@@ -81,7 +90,7 @@ SysAP/
 ├── apps/
 │   ├── api/                    # API e worker Go
 │   ├── web/                    # Next.js/TypeScript
-│   └── android/                # Kotlin/Jetpack Compose
+│   └── mobile/                 # Flutter/Dart + adapters Kotlin/Swift futuros
 ├── contracts/
 │   └── openapi/                # contrato HTTP versionado
 ├── infra/
@@ -91,7 +100,9 @@ SysAP/
 │   └── containers/             # imagens/configurações locais
 ├── docs/
 │   ├── architecture.md
-│   ├── decisions/              # ADRs futuros
+│   ├── architecture/decisions/ # ADRs
+│   ├── phase-2/                # plano incremental de identidade
+│   ├── security/               # ameaças e testes adversariais
 │   └── codex/
 ├── AGENTS.md
 ├── package.json              # comandos padronizados via pnpm
@@ -109,7 +120,7 @@ apps/api/
 │   ├── api/
 │   └── worker/
 ├── internal/
-│   ├── identity/
+│   ├── identity/               # domínio, aplicação, ports, postgres e HTTP
 │   ├── organizations/
 │   ├── athletes/
 │   ├── teams/
@@ -118,17 +129,24 @@ apps/api/
 │   ├── feedback/
 │   ├── telemetry/
 │   ├── analytics/
-│   └── platform/               # db, auth, logging, clock e HTTP compartilhado
+│   ├── integrations/           # Supabase Auth e fronteiras externas
+│   └── platform/               # db, config, logging e HTTP genéricos
 └── migrations/                 # link ou fonte única definida no bootstrap
 ```
 
-Não aplicar uma arquitetura cerimonial com dezenas de interfaces. Interfaces são úteis nas fronteiras que realmente mudam: banco, relógio/Health Connect, formato de colete, armazenamento e relógio de sistema para testes.
+Não aplicar uma arquitetura cerimonial com dezenas de interfaces. Na identidade,
+as portas pequenas e nomeadas são `IdentityProvider`, `TokenVerifier`,
+`SessionRegistry`, `MFAChallengeStore`, `SMSProvider`,
+`EnrollmentNumberGenerator`, `Clock`, `RateLimiter`, `SecurityAuditWriter` e
+`TransactionManager`. O domínio não importa HTTP, pgx, Supabase ou provider
+SMS; a aplicação inicial pede OTP ao `IdentityProvider`, e somente o Supabase
+Auth conhece `twilio_verify`.
 
 ## 5. Módulos de domínio
 
 | Módulo | Responsabilidade |
 |---|---|
-| Identity | Validar JWT, usuário atual e papéis. |
+| Identity | Matrícula, provisionamento, autenticação, sessão, estado de acesso e coordenação com Auth. |
 | Organizations | Organização, membros e isolamento dos dados. |
 | Athletes | Perfil esportivo e dados básicos do atleta. |
 | Teams | Turmas e vínculos de atletas. |
@@ -139,17 +157,45 @@ Não aplicar uma arquitetura cerimonial com dezenas de interfaces. Interfaces s�
 | Analytics | Métricas de sessão, totais, caminho normalizado, heatmap e alertas. |
 | Audit | Registro imutável de ações sensíveis. |
 
+As fronteiras, estados e operações da Fase 2 estão detalhados no
+[ADR de identidade](architecture/decisions/0001-phase-2-identity.md) e no
+[plano da Fase 2](phase-2/README.md).
+
 ## 6. Modelo de dados
 
-Todas as tabelas de negócio usam UUID, `created_at`, `updated_at` quando aplicável e `organization_id` para isolamento. Instantes são persistidos em UTC com `timestamptz`; datas civis, como nascimento, usam `date`. O fuso `America/Fortaleza` é responsabilidade da apresentação.
+Entidades usam UUID, `created_at` e `updated_at` quando aplicável. Tabelas
+pertencentes a tenant carregam `organization_id`; registros globais por sujeito,
+como `profiles`, `auth_identities`, `auth_sessions` e `auth_challenges`, não
+duplicam tenant e são sempre alcançados por membership autorizada. Instantes
+são persistidos em UTC com `timestamptz`; datas civis, como nascimento, usam
+`date`. `America/Fortaleza` é usado na apresentação e em regra civil
+explicitamente documentada, como o ano da matrícula, nunca pelo fuso implícito
+do host.
 
 ### Núcleo
 
 - `organizations`: unidade proprietária dos dados.
-- `profiles`: extensão mínima de `auth.users` para usuários autenticados.
-- `memberships`: usuário, organização, papel e status.
+- `profiles`: extensão mínima da identidade, sem credencial.
+- `memberships`: identidade, organização, papel e estado autoritativo.
+- `auth_identities`: vínculo privado entre sujeito do SysAP e identificador
+  técnico opaco de `auth.users`; não aparece como ID de negócio. O mesmo sujeito
+  pode existir em `sub` dentro do access JWT, tratado pelo cliente como opaco.
+- `athlete_invitations`: pré-cadastro, matrícula global, telefone protegido,
+  estado e expiração/cancelamento.
+- `identity_operations`: idempotência, estado intermediário, retries e
+  reconciliação de comandos externos.
+- `auth_sessions`: `session_id`, sujeito e revogação/corte local, sem access ou
+  refresh token persistido.
+- `auth_challenges`: digest HMAC e metadados mínimos do ticket MFA; o access
+  AAL1 fica cifrado por AEAD por até cinco minutos e é apagado ao
+  consumir/expirar; chave versionada permanece fora do banco.
+- `trainer_athlete_assignments`: escopo explícito do trainer; owner permanece
+  autorizado para todos os atletas da organização.
+- `security_rate_limits`: janelas/contadores por representações HMAC, sem PII
+  bruta como chave observável.
 - `teams`: turma, categoria e treinador responsável.
-- `athletes`: nome, nascimento, posição/modalidades e `auth_user_id` opcional.
+- `athletes`: nome, nascimento, posição/modalidades e vínculo opcional com a
+  identidade privada do SysAP.
 - `team_athletes`: vínculo temporal entre atleta e turma.
 
 ### Acompanhamento
@@ -181,7 +227,11 @@ Todas as tabelas de negócio usam UUID, `created_at`, `updated_at` quando aplic�
 
 ## 7. Contrato da API
 
-Prefixo: `/api/v1`. Erros usam um envelope consistente com código estável, mensagem segura, detalhes de validação e `request_id`.
+Probes técnicos permanecem em `/healthz` e `/readyz`. Endpoints de negócio usam
+o prefixo `/v1`; esta decisão substitui a antiga proposta `/api/v1` antes de ela
+ser implementada e segue o contrato aprovado na Subfase 2A. Erros usam um
+envelope consistente com código estável, mensagem segura, detalhes de validação
+e `request_id`.
 
 ### Endpoints iniciais
 
@@ -189,45 +239,55 @@ Prefixo: `/api/v1`. Erros usam um envelope consistente com código estável, men
 |---|---|
 | `GET /healthz` | Saúde do processo, sem depender de serviços externos. |
 | `GET /readyz` | Prontidão da API e dependências. |
-| `GET /me` | Perfil, organização e permissões atuais. |
-| `GET/POST /athletes` | Listar e cadastrar atletas. |
-| `GET/PATCH /athletes/{id}` | Consultar e editar um atleta. |
-| `GET/POST /teams` | Administrar turmas. |
-| `POST /teams/{id}/athletes` | Vincular atleta à turma. |
-| `GET/POST /training-sessions` | Agenda e criação de treino. |
-| `PUT /training-sessions/{id}/attendance` | Presença em lote. |
-| `POST /athletes/{id}/readiness-checkins` | Check-in do atleta. |
-| `POST /athletes/{id}/feedback` | Feedback do treinador. |
-| `POST /telemetry/gps-imports` | Iniciar upload/importação do colete. |
-| `GET /telemetry/imports/{id}` | Acompanhar status e erros do import. |
-| `POST /telemetry/health-connect/workouts` | Sincronizar treino autorizado. |
-| `GET /training-sessions/{id}/summary` | Resumo calculado da sessão. |
-| `GET /training-sessions/{id}/path` | Caminho normalizado do atleta. |
-| `GET /training-sessions/{id}/heatmap` | Grade do mapa de calor. |
-| `GET /athletes/{id}/history` | Séries e totais por período. |
+| `POST /v1/athlete-invitations` | Pré-cadastrar atleta no `X-Organization-ID` validado contra a membership. |
+| `POST /v1/athlete-invitations/{id}/resend` | Solicitar reenvio de ativação. |
+| `DELETE /v1/athlete-invitations/{id}` | Cancelar convite pendente. |
+| `POST /v1/auth/athlete/activate` | Confirmar OTP e senha do atleta. |
+| `POST /v1/auth/athlete/login` | Login por matrícula e senha. |
+| `POST /v1/auth/staff/login` | Verificar senha e iniciar TOTP de staff. |
+| `POST /v1/auth/staff/mfa/enroll` | Iniciar enrollment TOTP quando o ticket exigir bootstrap. |
+| `POST /v1/auth/staff/mfa/verify` | Concluir TOTP e emitir sessão AAL2. |
+| `POST /v1/auth/refresh` | Rotacionar sessão. |
+| `POST /v1/auth/logout` e `/logout-all` | Encerrar sessão atual ou todas. |
+| `POST /v1/auth/recovery/request` e `/confirm` | Recuperação genérica para atleta, sem enumeração. |
+| `GET /v1/me` | Perfil e memberships atuais; permissões são derivadas server-side. |
+| `PATCH /v1/memberships/{id}/access` | Suspender ou reativar acesso. |
 
-O arquivo em `contracts/openapi/` é a fonte de verdade do contrato. O frontend e o Android não devem criar tipos divergentes manualmente quando geração ou validação for viável.
+Endpoints de atletas, turmas, treinos, prontidão e telemetria continuam no
+roadmap e só entram no OpenAPI no corte que os implementar. O contrato da 2A é
+conceitual e cada operação planejada está marcada como não implementada.
+
+O arquivo em `contracts/openapi/` é a fonte de verdade do contrato. Web e
+mobile não devem criar tipos divergentes manualmente quando geração ou
+validação for viável.
 
 ## 8. Fluxos de dispositivos
 
-### 8.1 Smartwatch por Health Connect
+### 8.1 Smartwatch pelo sistema do celular
 
 ```mermaid
 sequenceDiagram
     participant W as Relógio
     participant V as App do fabricante
-    participant H as Health Connect
-    participant A as App SysAP
+    participant H as Health Connect / HealthKit
+    participant N as Adapter Kotlin / Swift
+    participant A as Mobile Flutter SysAP
     participant B as API SysAP
     W->>V: Registra o treino
     V->>H: Sincroniza dados permitidos
-    A->>H: Solicita consentimento granular
-    H-->>A: Retorna dados autorizados
+    A->>N: Solicita dados necessários
+    N->>H: Solicita consentimento granular
+    H-->>N: Retorna dados autorizados
+    N-->>A: Normaliza DTO da plataforma
     A->>B: Envia lote idempotente
     B-->>A: Confirma ou informa itens rejeitados
 ```
 
-O aplicativo solicita somente os tipos de dado necessários. Revogação, ausência de Health Connect e histórico insuficiente devem ter estados de interface claros. O MVP não pressupõe que todo relógio fornecerá rota, sono, calorias ou frequência cardíaca com a mesma qualidade.
+O aplicativo solicita somente os tipos de dado necessários. Revogação, ausência
+de Health Connect/HealthKit e histórico insuficiente devem ter estados de
+interface claros. O MVP não pressupõe que todo relógio ou plataforma fornecerá
+rota, sono, calorias ou frequência cardíaca com a mesma qualidade. Não existe
+app próprio instalado no relógio.
 
 ### 8.2 Colete GPS por arquivo
 
@@ -287,30 +347,45 @@ Usar Server Components por padrão e Client Components apenas para interação, 
 
 A logo canônica é `assets/brand/artur-performance-logo.png`, em PNG transparente. O produto usa superfícies escuras, branco e dourado. Os tokens iniciais estão documentados em `assets/brand/README.md`; o dourado principal é `#D4AE29`. Elementos dourados usam texto escuro para contraste. A logo não pode ser redesenhada, recolorida, distorcida ou receber efeitos adicionais.
 
-## 11. Aplicativo Android
+## 11. Aplicativo mobile
 
-O aplicativo do atleta será Android nativo com:
+O aplicativo do atleta será compartilhado em Flutter/Dart para Android e iOS:
 
-- Kotlin e Jetpack Compose.
 - arquitetura por features e fluxo unidirecional de estado;
-- Supabase Auth para sessão;
-- cliente gerado/tipado para a API;
-- Health Connect atrás de um repositório/adaptador;
-- WorkManager apenas para sincronização permitida e recuperável;
-- armazenamento local mínimo e criptografado quando houver dado sensível;
+- cliente tipado para a API Go; autenticação também passa pela API;
+- Health Connect atrás de adapter Kotlin;
+- HealthKit atrás de adapter Swift;
+- refresh token cifrado em armazenamento privado Android com chave não
+  exportável no Keystore, ou guardado no Apple Keychain;
+- armazenamento local mínimo e nenhum token em arquivo, preferência comum ou
+  log;
 - telas de início, prontidão, treino sincronizado, evolução e perfil.
 
-Não criar módulo Wear OS no P0. O relógio conversa primeiro com o aplicativo do fabricante e com o Health Connect.
+Kotlin/Swift existem somente onde a API nativa exigir. Não criar módulo Wear OS
+ou watchOS no P0. O relógio conversa primeiro com o sistema/aplicativo do
+fabricante no celular. Consulte o
+[ADR mobile](architecture/decisions/0002-cross-platform-mobile.md).
 
 ## 12. Segurança, privacidade e LGPD
 
 - Coletar apenas dados necessários e registrar finalidade e consentimento.
-- Permissões granulares e revogáveis para Health Connect.
-- Separar autenticação de autorização; JWT válido não concede acesso a outra organização.
-- Não enviar `service_role`, conexão do banco ou segredo para browser/Android.
+- Permissões granulares e revogáveis para Health Connect e HealthKit.
+- Separar autenticação de autorização; JWT válido não concede acesso a outra
+  organização e não ignora suspensão.
+- Supabase Auth guarda senha, OTP/TOTP e sessões; a API confirma papel,
+  organização e estado autoritativos no PostgreSQL.
+- Toda rota protegida confirma `session_id`; logout marca revogação local antes
+  do sign-out porque o access JWT continua verificável até `exp`.
+- Não enviar `service_role`, conexão do banco, segredo Auth ou credencial Twilio
+  para browser/mobile.
+- Manter `auth.sms.enable_signup = false`; OTP só para identidade pré-criada.
+- Twilio Verify é configurado apenas no Supabase Auth. Local/CI usa
+  `auth.sms.test_otp`, provider real ausente e nenhuma rede externa.
 - Criptografia em trânsito e recursos privados no Storage.
-- Logs estruturados sem token, conteúdo de feedback ou dados brutos de saúde.
-- Auditoria de cadastro, alteração de papel, importação, exportação e exclusão.
+- Logs estruturados sem senha, OTP, token, telefone/email completo, conteúdo de
+  feedback, erro bruto de provider ou dados brutos de saúde.
+- Auditoria de convite, provisionamento, OTP, autenticação, sessão, suspensão,
+  alteração de papel, importação, exportação e exclusão.
 - Processo de acesso, correção, portabilidade e exclusão de dados.
 - Consentimento do responsável e regras de retenção para menores antes de uso real.
 - Backup e teste periódico de restauração antes da produção.
@@ -320,9 +395,11 @@ Não criar módulo Wear OS no P0. O relógio conversa primeiro com o aplicativo 
 - Logs JSON com `request_id`, usuário técnico, organização e latência, sem dados sensíveis.
 - Métricas de requisições, erros, duração de imports e tamanho das filas.
 - Endpoints separados de liveness e readiness.
-- Ambientes local, homologação e produção com segredos distintos.
+- Ambientes local, staging e produção com segredos distintos; credenciais SMS
+  somente server-side e externas ao Git.
 - API empacotada em container; banco e Storage gerenciados pelo Supabase.
-- GitHub Actions para validar API, web, Android, OpenAPI e migrations.
+- GitHub Actions para validar API, Web, mobile quando criado, OpenAPI e
+  migrations.
 
 ## 14. Estratégia de testes
 
@@ -333,7 +410,7 @@ Não criar módulo Wear OS no P0. O relógio conversa primeiro com o aplicativo 
 | GPS | Fixtures anonimizadas, idempotência, unidades, arquivo inválido e pontos ausentes. |
 | API | Contrato, validação, isolamento de organização e respostas de erro. |
 | Web | Componentes críticos e fluxos de presença/importação. |
-| Android | Permissão negada, Health Connect indisponível, sincronização repetida e offline. |
+| Mobile | Sessão segura, permissão negada, Health Connect/HealthKit indisponível, sincronização repetida e offline. |
 | E2E | Treinador cria atleta e treino, marca presença, importa dados e vê o resumo. |
 
 ## 15. Plano priorizado
@@ -360,9 +437,13 @@ seguintes.
 
 ### Fase 2 — Identidade e atletas
 
-- Supabase Auth, validação JWT e RBAC.
-- Organização, membros, atletas e turmas.
-- Primeiro corte vertical web + API + banco.
+- Subfase 2A: ADRs, ameaças, testes adversariais futuros e contrato OpenAPI.
+- Supabase Auth atrás da API, validação JWT, RBAC e suspensão autoritativa.
+- Organização, memberships, convite, matrícula, ativação, login, recovery,
+  sessões, rate limiting, reconciliação e auditoria.
+- Twilio Verify preferencial via `twilio_verify`; produção permanece um gate.
+- Primeiro corte vertical Web + API + banco; detalhes em
+  [`docs/phase-2/README.md`](phase-2/README.md).
 
 ### Fase 3 — Rotina do treinador
 
@@ -375,10 +456,10 @@ seguintes.
 - Upload privado, worker, parser, idempotência e métricas.
 - Calibração do campo, caminho normalizado e heatmap.
 
-### Fase 5 — Android e smartwatch
+### Fase 5 — Mobile e smartwatch
 
-- App Android, autenticação e prontidão.
-- Permissões e sincronização Health Connect.
+- App Flutter para Android/iOS, autenticação e prontidão.
+- Adapters Kotlin/Health Connect e Swift/HealthKit.
 - Dados no resumo e histórico do atleta.
 
 ### Fase 6 — Evolução e endurecimento
@@ -393,11 +474,14 @@ Cada fase termina com demonstração, revisão do diff, testes e atualização d
 | Risco/decisão | Tratamento |
 |---|---|
 | Modelo exato do colete ainda não confirmado | Não implementar parser; exigir arquivo real e manual do fabricante. |
-| Relógios fornecem dados diferentes | Mostrar disponibilidade por fonte e testar Health Connect em aparelho real. |
+| Relógios e plataformas fornecem dados diferentes | Mostrar disponibilidade por fonte e testar Health Connect/HealthKit em aparelhos reais. |
 | Precisão do GPS comprometer o heatmap | Calibração, indicador de cobertura e estado “dados insuficientes”. |
 | Dados de menores | Consentimento, minimização, acesso e retenção definidos antes do piloto. |
 | Escopo grande para um desenvolvedor iniciante | Uma fase e um corte vertical por vez, com checkpoints obrigatórios. |
 | Fórmulas parecerem diagnóstico | Explicações visíveis, versionamento e linguagem não médica. |
+| SMS pumping e custo variável | Rate limit/quota/circuit breaker da API, Fraud Guard, destinos restritos e alertas; carga só com fake. |
+| SIM swap e indisponibilidade SMS | SMS restrito a atleta, TOTP para staff, recuperação assistida e alternativa futura não-PSTN. |
+| Twilio no Brasil | Confirmar preço, entregabilidade, operação e credencial antes de produção; provider permanece substituível. |
 
 ## 17. Referências oficiais
 
@@ -406,6 +490,12 @@ Cada fase termina com demonstração, revisão do diff, testes e atualização d
 - [Health Connect — experiências de treino](https://developer.android.com/health-and-fitness/health-connect/experiences/workouts)
 - [Supabase Auth](https://supabase.com/docs/guides/auth)
 - [Supabase JWT](https://supabase.com/docs/guides/auth/jwts)
+- [Supabase CLI Auth/SMS](https://supabase.com/docs/guides/local-development/cli/config)
+- [Supabase MFA TOTP](https://supabase.com/docs/guides/auth/auth-mfa/totp)
 - [Supabase Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security)
 - [Next.js App Router](https://nextjs.org/docs/app/getting-started)
 - [Go Modules](https://go.dev/ref/mod)
+- [Flutter platform channels](https://docs.flutter.dev/platform-integration/platform-channels)
+- [Apple HealthKit](https://developer.apple.com/documentation/healthkit)
+- [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html)
+- [Twilio Verify Fraud Guard](https://www.twilio.com/docs/verify/preventing-toll-fraud/sms-fraud-guard)
