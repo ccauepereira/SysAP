@@ -606,6 +606,8 @@ paths:
         SysAP. O resultado nao expoe identificador tecnico de autenticacao,
         telefone, tokens nem claims usados como unica fonte de autorizacao.
       x-sysap-implementation-status: planned
+      security:
+        - BearerAccessToken: []
       responses:
         "200":
           description: Identidade e vinculos atuais.
@@ -622,14 +624,13 @@ paths:
                 fictionalAthlete:
                   summary: Perfil ficticio de atleta
                   value:
-                    profile_id: 40000000-0000-4000-8000-000000000001
-                    display_name: Atleta Exemplo
+                    profile:
+                      id: 40000000-0000-4000-8000-000000000001
+                      display_name: Atleta Exemplo
                     memberships:
-                      - membership_id: 20000000-0000-4000-8000-000000000001
-                        organization_id: 30000000-0000-4000-8000-000000000001
+                      - organization_id: 30000000-0000-4000-8000-000000000001
                         role: athlete
-                        access_status: active
-                        athlete_id: 50000000-0000-4000-8000-000000000001
+                        status: active
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
@@ -637,7 +638,7 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
-          $ref: "#/components/responses/ServiceUnavailable"
+          $ref: "#/components/responses/IdentityVerificationUnavailable"
   /v1/memberships/{membership_id}/access:
     parameters:
       - $ref: "#/components/parameters/MembershipID"
@@ -817,7 +818,9 @@ components:
                   message: authentication failed
                   request_id: 0123456789abcdef0123456789abcdef
     AuthenticationRequired:
-      description: Access token ausente, invalido, expirado ou revogado.
+      description: >-
+        Access token ausente, invalido ou expirado, ou sessao local inexistente
+        ou revogada.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -855,6 +858,28 @@ components:
                 error:
                   code: access_denied
                   message: access is denied
+                  request_id: 0123456789abcdef0123456789abcdef
+    IdentityVerificationUnavailable:
+      description: >-
+        Nenhuma chave JWKS confiavel esta disponivel para verificacao de
+        identidade. Esta resposta e planejada para GET /v1/me e nao revela
+        detalhes do token, claim, emissor ou infraestrutura.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            identityVerificationUnavailable:
+              summary: Verificacao de identidade indisponivel
+              value:
+                error:
+                  code: identity_verification_unavailable
+                  message: identity verification is temporarily unavailable
                   request_id: 0123456789abcdef0123456789abcdef
     ResourceNotFound:
       description: >-
@@ -1410,41 +1435,44 @@ components:
       type: object
       additionalProperties: false
       required:
-        - profile_id
-        - display_name
+        - profile
         - memberships
       properties:
-        profile_id:
-          $ref: "#/components/schemas/UUID"
-        display_name:
-          type: string
-          minLength: 1
-          maxLength: 120
+        profile:
+          $ref: "#/components/schemas/CurrentProfile"
         memberships:
           type: array
           minItems: 1
           maxItems: 100
           items:
-            $ref: "#/components/schemas/MembershipSummary"
-    MembershipSummary:
+            $ref: "#/components/schemas/CurrentMembership"
+    CurrentProfile:
       type: object
       additionalProperties: false
       required:
-        - membership_id
+        - id
+        - display_name
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+    CurrentMembership:
+      type: object
+      additionalProperties: false
+      required:
         - organization_id
         - role
-        - access_status
+        - status
       properties:
-        membership_id:
-          $ref: "#/components/schemas/UUID"
         organization_id:
           $ref: "#/components/schemas/UUID"
         role:
           $ref: "#/components/schemas/MembershipRole"
-        access_status:
+        status:
           $ref: "#/components/schemas/MembershipAccessStatus"
-        athlete_id:
-          $ref: "#/components/schemas/UUID"
     UpdateMembershipAccessRequest:
       oneOf:
         - type: object
