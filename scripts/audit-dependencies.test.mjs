@@ -10,46 +10,30 @@ async function fixture(name) {
   return JSON.parse(contents);
 }
 
-test("accepts an audit without advisories and reports the obsolete exception", async () => {
+test("accepts an audit without advisories (clean report)", async () => {
   assert.deepEqual(evaluateAuditReport(await fixture("pnpm-audit-clean.json")), {
-    acceptedPostCSSRisk: false,
     advisoryCount: 0,
   });
 });
 
-test("accepts only the exact documented PostCSS path and version", async () => {
-  assert.deepEqual(evaluateAuditReport(await fixture("pnpm-audit-accepted.json")), {
-    acceptedPostCSSRisk: true,
-    advisoryCount: 1,
-  });
+test("rejects any advisory (unexpected advisory)", async () => {
+  const report = await fixture("pnpm-audit-accepted.json");
+  assert.throws(() => evaluateAuditReport(report), /vulnerabilidade nao autorizada encontrada/);
 });
 
-test("rejects a new high vulnerability", async () => {
+test("rejects a high severity advisory", async () => {
   const report = await fixture("pnpm-audit-rejected.json");
-  assert.throws(() => evaluateAuditReport(report));
+  assert.throws(() => evaluateAuditReport(report), /vulnerabilidade nao autorizada encontrada/);
 });
 
-test("rejects the known advisory on a different path, version, or package", async () => {
-  const report = await fixture("pnpm-audit-accepted.json");
-  const advisory = report.advisories["1000001"];
-
-  advisory.findings[0].paths = ["other>postcss"];
-  assert.throws(() => evaluateAuditReport(report));
-  advisory.findings[0].paths = ["apps__web>next>postcss"];
-  advisory.findings[0].version = "8.4.30";
-  assert.throws(() => evaluateAuditReport(report));
-  advisory.findings[0].version = "8.4.31";
-  advisory.module_name = "other-package";
-  assert.throws(() => evaluateAuditReport(report));
+test("rejects invalid report structure (null, non-object, array)", () => {
+  assert.throws(() => evaluateAuditReport(null), /relatorio de dependencias invalido/);
+  assert.throws(() => evaluateAuditReport("not-json"), /relatorio de dependencias invalido/);
+  assert.throws(() => evaluateAuditReport([]), /relatorio de dependencias invalido/);
 });
 
-test("rejects any additional advisory, including lower severity", async () => {
-  const report = await fixture("pnpm-audit-accepted.json");
-  report.advisories["1000003"] = {
-    github_advisory_id: "GHSA-1111-1111-1111",
-    module_name: "fixture-package",
-    severity: "low",
-    findings: [{ version: "1.0.0", paths: ["fixture-package"] }],
-  };
-  assert.throws(() => evaluateAuditReport(report));
+test("rejects report missing advisories field or unexpected format", () => {
+  assert.throws(() => evaluateAuditReport({}), /relatorio de dependencias sem advisories/);
+  assert.throws(() => evaluateAuditReport({ advisories: null }), /relatorio de dependencias sem advisories/);
+  assert.throws(() => evaluateAuditReport({ advisories: "invalid" }), /relatorio de dependencias sem advisories/);
 });
