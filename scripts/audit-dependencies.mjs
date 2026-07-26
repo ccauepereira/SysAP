@@ -2,14 +2,6 @@ import path from "node:path";
 
 import { runCommandCapture } from "./run-command.mjs";
 
-const acceptedAdvisory = Object.freeze({
-  githubAdvisoryID: "GHSA-qx2v-qp2m-jg93",
-  moduleName: "postcss",
-  severity: "moderate",
-  version: "8.4.31",
-  path: "apps__web>next>postcss",
-});
-
 export function evaluateAuditReport(report) {
   if (report === null || typeof report !== "object" || Array.isArray(report)) {
     throw new Error("relatorio de dependencias invalido");
@@ -20,38 +12,10 @@ export function evaluateAuditReport(report) {
   }
 
   const entries = Object.values(advisories);
-  if (entries.length === 0) {
-    return { acceptedPostCSSRisk: false, advisoryCount: 0 };
-  }
-  if (entries.length !== 1 || !isAcceptedPostCSSAdvisory(entries[0])) {
+  if (entries.length > 0) {
     throw new Error("vulnerabilidade nao autorizada encontrada");
   }
-  return { acceptedPostCSSRisk: true, advisoryCount: 1 };
-}
-
-function isAcceptedPostCSSAdvisory(advisory) {
-  if (advisory === null || typeof advisory !== "object") {
-    return false;
-  }
-  if (
-    advisory.github_advisory_id !== acceptedAdvisory.githubAdvisoryID ||
-    advisory.module_name !== acceptedAdvisory.moduleName ||
-    advisory.severity !== acceptedAdvisory.severity ||
-    !Array.isArray(advisory.findings) ||
-    advisory.findings.length !== 1
-  ) {
-    return false;
-  }
-
-  const finding = advisory.findings[0];
-  return (
-    finding !== null &&
-    typeof finding === "object" &&
-    finding.version === acceptedAdvisory.version &&
-    Array.isArray(finding.paths) &&
-    finding.paths.length === 1 &&
-    finding.paths[0] === acceptedAdvisory.path
-  );
+  return { advisoryCount: 0 };
 }
 
 async function main() {
@@ -69,12 +33,8 @@ async function main() {
   } catch {
     throw new Error("pnpm audit nao produziu JSON valido");
   }
-  const decision = evaluateAuditReport(report);
-  if (decision.acceptedPostCSSRisk) {
-    process.stdout.write("Dependencias: PASS; risco moderado PostCSS documentado e isolado.\n");
-  } else {
-    process.stdout.write("Dependencias: PASS; a excecao PostCSS nao e mais necessaria.\n");
-  }
+  evaluateAuditReport(report);
+  process.stdout.write("Dependencias: PASS; nenhuma vulnerabilidade encontrada.\n");
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
