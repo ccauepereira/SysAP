@@ -155,6 +155,7 @@ func TestPostgresFoundation(t *testing.T) {
 			    (table_name = 'outbox_events' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'security_audit_events' and privilege_type in ('SELECT', 'INSERT'))
+			    or (table_name = 'auth_sessions' and privilege_type = 'SELECT')
 			  )
 		`, &unexpectedAPIGrants)
 		scanRowWithArguments(t, adminPool, ctx, `

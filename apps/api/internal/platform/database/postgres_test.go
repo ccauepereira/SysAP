@@ -2,9 +2,22 @@ package database
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
+
+func TestWithAuthenticatedContextRejectsIncompleteContextWithoutDatabase(t *testing.T) {
+	pool := &Pool{}
+
+	if err := pool.WithAuthenticatedContext(context.Background(), AuthenticatedContext{}, func(pgx.Tx) error {
+		return nil
+	}); !errors.Is(err, ErrMissingAuthenticatedSubjectID) {
+		t.Fatalf("WithAuthenticatedContext() error = %v, want missing subject ID", err)
+	}
+}
 
 func TestNewPoolRejectsInvalidURLWithoutConnecting(t *testing.T) {
 	if _, err := NewPool(context.Background(), "://invalid"); err == nil {
