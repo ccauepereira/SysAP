@@ -94,7 +94,7 @@ create table app.auth_session_revocation_sync (
     status text not null check (status in ('pending', 'succeeded', 'failed')),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    constraint auth_session_revocation_sync_scope_check check (
+    constraint phase_2f1_auth_session_revocation_scope_check check (
         (scope = 'current_session' and session_id is not null)
         or (scope = 'all_sessions')
     )

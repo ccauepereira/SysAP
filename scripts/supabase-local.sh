@@ -171,12 +171,20 @@ fixed_result() {
     failure_category="unknown"
     failure_statement=""
     failure_sqlstate=""
+    failure_migration=""
+    failure_object=""
     while IFS= read -r output_line; do
       if [[ "$output_line" =~ [Aa]t[[:space:]]statement:?[[:space:]]+([0-9]+) ]]; then
         failure_statement=${BASH_REMATCH[1]}
       fi
       if [[ "$output_line" =~ SQLSTATE[[:space:]]+([0-9A-Z]{5}) ]]; then
         failure_sqlstate=${BASH_REMATCH[1]}
+      fi
+      if [[ "$output_line" =~ (20[0-9]{10,12}_[A-Za-z0-9_.-]+\.sql) ]]; then
+        failure_migration=${BASH_REMATCH[1]}
+      fi
+      if [[ "$output_line" =~ (relation|role|schema|function|column|table|type)[[:space:]]+\"?([A-Za-z0-9_.-]+)\"?[[:space:]]+(does not exist|already exists) ]]; then
+        failure_object="${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}"
       fi
       case "$output_line" in
         *"create role"*|*"CREATE ROLE"*)
@@ -209,12 +217,15 @@ fixed_result() {
           break
           ;;
         *"already exists"*)
-          failure_category="persistent role already exists"
+          if [[ "$output_line" == *"constraint"* ]]; then
+            failure_category="duplicate database object"
+          else
+            failure_category="persistent role already exists"
+          fi
           break
           ;;
-        *"does not exist"*)
-          failure_category="required local role is missing"
-          break
+        *"ERROR:"*|*"FATAL:"*)
+          failure_category="database migration"
           ;;
         *"cannot be dropped"*|*"dependent objects"*|*"objects depend"*)
           failure_category="persistent role dependencies"
@@ -251,7 +262,15 @@ fixed_result() {
           ;;
       esac
     done <"$output_file"
-    if [ -n "$failure_statement" ] && [ -n "$failure_sqlstate" ]; then
+    if [ -n "$failure_migration" ] && [ -n "$failure_statement" ] && [ -n "$failure_sqlstate" ]; then
+      if [ -n "$failure_object" ]; then
+        printf 'Supabase local: %s failed (%s, migration %s, statement %s, SQLSTATE %s, object %s).\n' \
+          "$action" "$failure_category" "$failure_migration" "$failure_statement" "$failure_sqlstate" "$failure_object" >&2
+      else
+        printf 'Supabase local: %s failed (%s, migration %s, statement %s, SQLSTATE %s).\n' \
+          "$action" "$failure_category" "$failure_migration" "$failure_statement" "$failure_sqlstate" >&2
+      fi
+    elif [ -n "$failure_statement" ] && [ -n "$failure_sqlstate" ]; then
       printf 'Supabase local: %s failed (%s, statement %s, SQLSTATE %s).\n' \
         "$action" "$failure_category" "$failure_statement" "$failure_sqlstate" >&2
     elif [ -n "$failure_statement" ]; then

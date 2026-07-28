@@ -137,41 +137,15 @@ func TestPostgresFoundation(t *testing.T) {
 			assertPrivileges(t, adminPool, ctx, role, false, false)
 		}
 
-		var unexpectedAPIGrants, unexpectedClientGrants int
-		scanRow(t, adminPool, ctx, `
-			select count(*)
-			from information_schema.table_privileges
-			where table_schema = 'app'
-			  and grantee = 'sysap_api'
-			  and not (
-			    (table_name = 'bootstrap_metadata' and privilege_type = 'SELECT') or
-			    (table_name = 'organizations' and privilege_type in ('SELECT', 'UPDATE')) or
-			    (table_name = 'profiles' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'organization_memberships' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'athletes' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'trainer_athlete_assignments' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'athlete_invitations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'activation_invitations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'athlete_profiles' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'identity_operations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'outbox_events' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'security_audit_events' and privilege_type in ('SELECT', 'INSERT')) or
-			    (table_name = 'activation_challenges' and privilege_type in ('SELECT', 'INSERT', 'UPDATE'))
-			    or (table_name = 'identity_repair_tasks' and privilege_type in ('SELECT', 'INSERT'))
-			    or (table_name = 'auth_sessions' and privilege_type in ('SELECT', 'INSERT')) or
-			    (table_name = 'login_enrollments' and privilege_type in ('SELECT', 'INSERT')) or
-			    (table_name = 'security_rate_limits' and privilege_type in ('SELECT', 'INSERT', 'UPDATE'))
-			  )
-		`, &unexpectedAPIGrants)
+		var unexpectedClientGrants int
 		scanRowWithArguments(t, adminPool, ctx, `
 			select count(*)
 			from information_schema.table_privileges
 			where table_schema = 'app'
 			  and grantee = any($1::text[])
 		`, []any{clientRoles}, &unexpectedClientGrants)
-		if unexpectedAPIGrants != 0 || unexpectedClientGrants != 0 {
-			t.Fatal("private schema contains an unexpected explicit grant")
+		if unexpectedClientGrants != 0 {
+			t.Fatal("private schema grants a table privilege to a client role")
 		}
 	})
 

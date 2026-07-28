@@ -105,6 +105,27 @@ func TestPhase2CSessionContext(t *testing.T) {
 				t.Fatalf("sysap_api privilege %q on auth_sessions = %v", privilege, granted)
 			}
 		}
+		for _, column := range []struct {
+			name string
+			want bool
+		}{
+			{name: "revoked_at", want: true},
+			{name: "revocation_reason", want: true},
+			{name: "session_id", want: false},
+			{name: "profile_id", want: false},
+			{name: "organization_id", want: false},
+			{name: "assurance_level", want: false},
+			{name: "registered_at", want: false},
+		} {
+			var granted bool
+			scanRowWithArguments(t, adminPool, ctx,
+				"select has_column_privilege('sysap_api', 'app.auth_sessions', $1, 'update')",
+				[]any{column.name}, &granted,
+			)
+			if granted != column.want {
+				t.Fatalf("sysap_api UPDATE on auth_sessions.%s = %v, want %v", column.name, granted, column.want)
+			}
+		}
 
 		for _, table := range []string{"profiles", "organization_memberships", "auth_sessions"} {
 			for _, role := range clientRoles {
@@ -281,6 +302,39 @@ func TestPhase2CSessionContext(t *testing.T) {
 		scanRow(t, transaction, ctx, "select app.current_tenant_id() is null", &organizationIsNull)
 		if !subjectIsNull || !sessionIsNull || !organizationIsNull {
 			t.Fatal("transaction-local identity context leaked to a later transaction")
+		}
+	})
+
+	t.Run("API context revokes only its own session", func(t *testing.T) {
+		identity := AuthenticatedContext{
+			SubjectID: mustPGUUID(t, fixture.subjectA),
+			SessionID: mustPGUUID(t, fixture.sessionA),
+		}
+		if err := pool.WithAuthenticatedContext(ctx, identity, func(transaction pgx.Tx) error {
+			if _, err := transaction.Exec(ctx, "select set_config('sysap.session_flow', 'true', true)"); err != nil {
+				return err
+			}
+			command, err := transaction.Exec(ctx, `
+				update app.auth_sessions
+				set revoked_at = now(), revocation_reason = 'logout'
+				where session_id = $1 and revoked_at is null`, fixture.sessionA)
+			if err != nil {
+				return err
+			}
+			if command.RowsAffected() != 1 {
+				return errors.New("authenticated API context did not revoke its own session")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("narrow session revocation failed: %v", err)
+		}
+		var revoked bool
+		scanRowWithArguments(t, adminPool, ctx,
+			"select revoked_at is not null from app.auth_sessions where session_id = $1",
+			[]any{fixture.sessionA}, &revoked,
+		)
+		if !revoked {
+			t.Fatal("API session revocation was not persisted")
 		}
 	})
 }
