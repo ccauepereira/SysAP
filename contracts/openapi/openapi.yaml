@@ -157,11 +157,12 @@ paths:
       operationId: startActivation
       tags:
         - Convites de atleta
-      summary: Iniciar ativação local de atleta
+      summary: Iniciar ativação de atleta
       description: >-
         Inicia o fluxo de ativação, gerando um OTP para a matrícula informada.
         Sempre retorna 202 Accepted para não enumerar matrículas válidas.
-        A geração é feita através de um provedor de OTP local.
+        Em desenvolvimento, o provedor é local; em produção, o envio é
+        configurado no Supabase Auth. A API não integra provedores SMS diretamente.
       security: []
       requestBody:
         required: true
@@ -180,6 +181,8 @@ paths:
                   status:
                     type: string
                     example: accepted
+        "503":
+          $ref: "#/components/responses/IdentityVerificationUnavailable"
   /v1/activation/verify:
     post:
       operationId: verifyActivation
@@ -215,7 +218,7 @@ paths:
       summary: Concluir ativação
       description: >-
         Conclui o fluxo de ativação, validando a activation_proof e definindo a senha do atleta.
-        Provisiona a identidade no Supabase Auth e o perfil de atleta.
+        Provisiona a identidade pelo adaptador server-side do Supabase Auth.
       x-sysap-implementation-status: implemented
       security: []
       requestBody:

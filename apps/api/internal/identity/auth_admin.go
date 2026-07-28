@@ -5,101 +5,166 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const (
+	authAdminTimeout  = 3 * time.Second
+	authAdminMaxBody  = 64 * 1024
+	authAdminEndpoint = "admin/users"
+)
+
+var errAuthUnavailable = errors.New("auth admin unavailable")
 
 type SupabaseAuthAdmin interface {
 	CreateUser(ctx context.Context, phone, password string) (uuid.UUID, error)
 	DeleteUser(ctx context.Context, id uuid.UUID) error
 }
 
+type unavailableAuthAdmin struct{}
+
+func (unavailableAuthAdmin) CreateUser(context.Context, string, string) (uuid.UUID, error) {
+	return uuid.Nil, errAuthUnavailable
+}
+func (unavailableAuthAdmin) DeleteUser(context.Context, uuid.UUID) error { return errAuthUnavailable }
+
 type supabaseAuthAdmin struct {
-	baseURL string
+	baseURL *url.URL
 	roleKey string
 	client  *http.Client
 }
 
+// NewSupabaseAuthAdmin intentionally accepts no URL from an HTTP request. The
+// Auth endpoint is server configuration and remains unavailable when omitted.
 func NewSupabaseAuthAdmin() SupabaseAuthAdmin {
-	return &supabaseAuthAdmin{
-		baseURL: os.Getenv("SYSAP_SUPABASE_URL"),
-		roleKey: os.Getenv("SYSAP_SUPABASE_SERVICE_ROLE_KEY"),
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+	baseURL, roleKey := os.Getenv("SYSAP_SUPABASE_AUTH_URL"), os.Getenv("SYSAP_SUPABASE_SERVICE_ROLE_KEY")
+	if baseURL == "" || roleKey == "" {
+		return unavailableAuthAdmin{}
 	}
+	admin, err := newSupabaseAuthAdmin(baseURL, roleKey, os.Getenv("SYSAP_ENV"), nil)
+	if err != nil {
+		return unavailableAuthAdmin{}
+	}
+	return admin
+}
+
+func newSupabaseAuthAdmin(baseURL, roleKey, environment string, client *http.Client) (*supabaseAuthAdmin, error) {
+	if roleKey == "" {
+		return nil, errAuthUnavailable
+	}
+	parsed, err := validatedAuthURL(baseURL, environment)
+	if err != nil {
+		return nil, errAuthUnavailable
+	}
+	if client == nil {
+		client = &http.Client{Timeout: authAdminTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	return &supabaseAuthAdmin{baseURL: parsed, roleKey: roleKey, client: client}, nil
+}
+
+func validatedAuthURL(rawURL, environment string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errAuthUnavailable
+	}
+	if parsed.Scheme == "https" {
+		return parsed, nil
+	}
+	if parsed.Scheme != "http" || !isLocalEnvironment(environment) || !isLoopbackHost(parsed.Hostname()) {
+		return nil, errAuthUnavailable
+	}
+	return parsed, nil
+}
+
+func isLocalEnvironment(environment string) bool {
+	return environment == "development" || environment == "test" || environment == "local"
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *supabaseAuthAdmin) CreateUser(ctx context.Context, phone, password string) (uuid.UUID, error) {
-	if s.baseURL == "" || s.roleKey == "" {
-		return uuid.Nil, errors.New("supabase admin not configured")
-	}
-
-	payload := map[string]interface{}{
-		"phone":        phone,
-		"password":     password,
-		"phone_confirm": true,
-	}
-	b, _ := json.Marshal(payload)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/auth/v1/admin/users", bytes.NewReader(b))
+	payload, err := json.Marshal(struct {
+		Phone        string `json:"phone"`
+		Password     string `json:"password"`
+		PhoneConfirm bool   `json:"phone_confirm"`
+	}{Phone: phone, Password: password, PhoneConfirm: true})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, errAuthUnavailable
 	}
-
-	req.Header.Set("apikey", s.roleKey)
-	req.Header.Set("Authorization", "Bearer "+s.roleKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return uuid.Nil, fmt.Errorf("auth error: %d", resp.StatusCode)
-	}
-
-	var result struct {
+	var response struct {
 		ID uuid.UUID `json:"id"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result); err != nil {
-		return uuid.Nil, err
+	if err := s.doJSON(ctx, http.MethodPost, authAdminEndpoint, bytes.NewReader(payload), &response); err != nil || response.ID == uuid.Nil {
+		return uuid.Nil, errAuthUnavailable
 	}
-
-	return result.ID, nil
+	return response.ID, nil
 }
 
 func (s *supabaseAuthAdmin) DeleteUser(ctx context.Context, id uuid.UUID) error {
-	if s.baseURL == "" || s.roleKey == "" {
-		return errors.New("supabase admin not configured")
+	if id == uuid.Nil {
+		return errAuthUnavailable
 	}
+	return s.doJSON(ctx, http.MethodDelete, authAdminEndpoint+"/"+id.String(), nil, nil)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.baseURL+"/auth/v1/admin/users/"+id.String(), nil)
+func (s *supabaseAuthAdmin) doJSON(ctx context.Context, method, path string, body io.Reader, target any) error {
+	endpoint := s.baseURL.JoinPath(path)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
-		return err
+		return errAuthUnavailable
 	}
-
 	req.Header.Set("apikey", s.roleKey)
 	req.Header.Set("Authorization", "Bearer "+s.roleKey)
-
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return errAuthUnavailable
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("auth delete error: %d", resp.StatusCode)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return errAuthUnavailable
+	}
+	if target == nil {
+		return discardBounded(resp.Body)
+	}
+	bodyBytes, err := readBounded(resp.Body)
+	if err != nil {
+		return errAuthUnavailable
+	}
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return errAuthUnavailable
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errAuthUnavailable
 	}
 	return nil
+}
+
+func readBounded(reader io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, authAdminMaxBody+1))
+	if err != nil || len(body) > authAdminMaxBody {
+		return nil, errAuthUnavailable
+	}
+	return body, nil
+}
+
+func discardBounded(reader io.Reader) error {
+	_, err := readBounded(reader)
+	return err
 }

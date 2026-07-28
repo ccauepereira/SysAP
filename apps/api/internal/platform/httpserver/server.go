@@ -60,6 +60,7 @@ func newHandler(
 	if activationHandler != nil {
 		mux.Handle("POST /v1/activation/start", activationHandler)
 		mux.Handle("POST /v1/activation/verify", activationHandler)
+		mux.Handle("POST /v1/activation/complete", activationHandler)
 	}
 
 	if authMiddleware != nil {

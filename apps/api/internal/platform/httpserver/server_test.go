@@ -130,6 +130,17 @@ func TestNewServerConfiguresHTTPTimeouts(t *testing.T) {
 	}
 }
 
+func TestRegistersActivationCompleteRoute(t *testing.T) {
+	activation := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := newHandler(&checkerStub{}, discardLogger(), time.Second, nil, nil, nil, activation, fixedRequestID)
+	response := performRequest(handler, http.MethodPost, "/v1/activation/complete")
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+}
+
 func performRequest(handler http.Handler, method, target string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, nil)
 	request.Header.Set(requestIDHeader, "client-request-id")
