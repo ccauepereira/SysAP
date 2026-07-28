@@ -69,8 +69,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	meHandler := identity.NewMeHandler(databasePool, logger)
 	invitationHandler := identity.NewInvitationHandler(databasePool, logger, nil, nil)
+	activationHandler := identity.NewActivationHandler(databasePool, os.Getenv("SYSAP_OTP_PEPPER"))
 
-	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler)
+	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler)
 	server := httpserver.NewServer(configuration.HTTPAddress, handler)
 	serverErrors := make(chan error, 1)
 

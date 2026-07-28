@@ -25,7 +25,7 @@ func (c *checkerStub) Ping(ctx context.Context) error {
 
 func TestHealthIsIndependentFromDatabase(t *testing.T) {
 	database := &checkerStub{err: errors.New("database unavailable")}
-	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, fixedRequestID)
+	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, nil, fixedRequestID)
 	response := performRequest(handler, http.MethodGet, "/healthz")
 
 	if response.Code != http.StatusOK {
@@ -44,7 +44,7 @@ func TestHealthIsIndependentFromDatabase(t *testing.T) {
 
 func TestReadinessReportsAvailableDatabase(t *testing.T) {
 	database := &checkerStub{}
-	handler := newHandler(database, discardLogger(), 250*time.Millisecond, nil, nil, nil, fixedRequestID)
+	handler := newHandler(database, discardLogger(), 250*time.Millisecond, nil, nil, nil, nil, fixedRequestID)
 	startedAt := time.Now()
 	response := performRequest(handler, http.MethodGet, "/readyz")
 
@@ -77,7 +77,7 @@ func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
 	database := &checkerStub{err: errors.New(fixtureURL)}
 	var logOutput bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
-	handler := newHandler(database, logger, time.Second, nil, nil, nil, fixedRequestID)
+	handler := newHandler(database, logger, time.Second, nil, nil, nil, nil, fixedRequestID)
 	response := performRequest(handler, http.MethodGet, "/readyz")
 
 	if response.Code != http.StatusServiceUnavailable {
@@ -105,7 +105,7 @@ func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
 
 func TestReadinessRecoversWithoutRecreatingHandler(t *testing.T) {
 	database := &checkerStub{err: errors.New("database is starting")}
-	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, fixedRequestID)
+	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, nil, fixedRequestID)
 
 	firstResponse := performRequest(handler, http.MethodGet, "/readyz")
 	if firstResponse.Code != http.StatusServiceUnavailable {
