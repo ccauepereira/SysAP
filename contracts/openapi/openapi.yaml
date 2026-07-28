@@ -207,6 +207,42 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "503":
           $ref: "#/components/responses/IdentityVerificationUnavailable"
+  /v1/activation/complete:
+    post:
+      operationId: completeActivation
+      tags:
+        - Convites de atleta
+      summary: Concluir ativação
+      description: >-
+        Conclui o fluxo de ativação, validando a activation_proof e definindo a senha do atleta.
+        Provisiona a identidade no Supabase Auth e o perfil de atleta.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationCompleteRequest"
+      responses:
+        "200":
+          description: Ativação concluída com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationCompleteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/ResourceConflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/athlete/login:
     post:
       operationId: loginAthlete
@@ -1314,7 +1350,36 @@ components:
       properties:
         activation_proof:
           type: string
-          description: Prova temporária de validação de OTP para uso subsequente.
+          description: Prova de validação do OTP (hexadecimal, única, opaca)
+          example: 1a2b3c4d5e6f7g8h
+    ActivationCompleteRequest:
+      type: object
+      required:
+        - activation_proof
+        - password
+      properties:
+        activation_proof:
+          type: string
+          description: Prova obtida no step de verify
+          example: 1a2b3c4d5e6f7g8h
+        password:
+          type: string
+          format: password
+          description: Senha do atleta
+    ActivationCompleteResponse:
+      type: object
+      properties:
+        profile_id:
+          type: string
+          format: uuid
+        enrollment_number:
+          type: string
+        role:
+          type: string
+          example: athlete
+        organization_id:
+          type: string
+          format: uuid
     AthleteLoginRequest:
       type: object
       additionalProperties: false

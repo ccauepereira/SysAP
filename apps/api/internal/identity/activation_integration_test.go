@@ -3,7 +3,10 @@ package identity
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,14 +15,37 @@ import (
 
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type mockOTPProvider struct {
-	code string
-	err  error
+	code       string
+	err        error
+	isExternal bool
+}
+func (m *mockOTPProvider) IsExternal() bool { return m.isExternal }
+func (m *mockOTPProvider) Start(ctx context.Context, phone string) error { return m.err }
+func (m *mockOTPProvider) Verify(ctx context.Context, phone, code string) error {
+	if code != m.code {
+		return errors.New("invalid_code")
+	}
+	return m.err
 }
 func (m *mockOTPProvider) NewCode() (string, error) { return m.code, m.err }
+
+type mockAuthAdmin struct {
+	createdID uuid.UUID
+	err       error
+	deleted   []uuid.UUID
+}
+func (m *mockAuthAdmin) CreateUser(ctx context.Context, phone, password string) (uuid.UUID, error) {
+	return m.createdID, m.err
+}
+func (m *mockAuthAdmin) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	m.deleted = append(m.deleted, id)
+	return nil
+}
 
 func setupActivationIntegrationTest(t *testing.T) (*database.Pool, func(), string, uuid.UUID, uuid.UUID) {
 	t.Helper()
@@ -87,7 +113,9 @@ func TestActivationStartAndVerify(t *testing.T) {
 	t.Run("invalid format", func(t *testing.T) {
 		pool, teardown, _, _, _ := setupActivationIntegrationTest(t)
 		defer teardown()
-		handler := newActivationHandler(pool, []byte(pepper), &mockOTPProvider{code: "123456"}, time.Now)
+		handler := newActivationHandler(pool, []byte("test-pepper"), &mockOTPProvider{}, &mockAuthAdmin{}, func() time.Time {
+			return time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+		})
 		
 		reqBody := map[string]string{"enrollment_number": "123"}
 		b, _ := json.Marshal(reqBody)
@@ -111,7 +139,7 @@ func TestActivationStartAndVerify(t *testing.T) {
 	t.Run("start returns 202 without enumerating", func(t *testing.T) {
 		pool, teardown, _, _, _ := setupActivationIntegrationTest(t)
 		defer teardown()
-		handler := newActivationHandler(pool, []byte(pepper), &mockOTPProvider{code: "123456"}, time.Now)
+		handler := newActivationHandler(pool, []byte(pepper), &mockOTPProvider{code: "123456"}, &mockAuthAdmin{}, time.Now)
 
 		reqBody := map[string]string{"enrollment_number": "0000000000"}
 		b, _ := json.Marshal(reqBody)
@@ -128,8 +156,9 @@ func TestActivationStartAndVerify(t *testing.T) {
 		pool, teardown, enrollment, _, _ := setupActivationIntegrationTest(t)
 		defer teardown()
 		
+		now := time.Now()
 		mockProvider := &mockOTPProvider{code: "654321"}
-		handler := newActivationHandler(pool, []byte(pepper), mockProvider, time.Now)
+		handler := newActivationHandler(pool, []byte("test-pepper"), mockProvider, &mockAuthAdmin{}, func() time.Time { return now })
 
 		reqBody := map[string]string{"enrollment_number": enrollment}
 		b, _ := json.Marshal(reqBody)
@@ -169,7 +198,7 @@ func TestActivationStartAndVerify(t *testing.T) {
 		now := time.Now()
 		timeMock := func() time.Time { return now }
 		mockProvider := &mockOTPProvider{code: "111111"}
-		handler := newActivationHandler(pool, []byte(pepper), mockProvider, timeMock)
+		handler := newActivationHandler(pool, []byte(pepper), mockProvider, &mockAuthAdmin{}, timeMock)
 
 		reqBody := map[string]string{"enrollment_number": enrollment}
 		b, _ := json.Marshal(reqBody)
@@ -255,6 +284,86 @@ func TestActivationStartAndVerify(t *testing.T) {
 		adminPool.QueryRow(context.Background(), "select resend_count from app.activation_challenges where invitation_id=$1 and invalidated_at is null", invitationID).Scan(&resendCount)
 		if resendCount != 0 {
 			t.Fatalf("expected resend_count 0 after 24h reset, got %d", resendCount)
+		}
+	})
+}
+
+func TestActivationComplete(t *testing.T) {
+	t.Run("invalid passwords", func(t *testing.T) {
+		pool, teardown, _, _, _ := setupActivationIntegrationTest(t)
+		defer teardown()
+		handler := newActivationHandler(pool, []byte("test-pepper"), &mockOTPProvider{}, &mockAuthAdmin{}, time.Now)
+		
+		passwords := []string{
+			"short1!",                 // less than 15 chars
+			"thisisverylongbutnodigits!", // no digits
+			"thisisverylong1234butnospecial", // no specials
+			"1234567890123456",        // only digits
+			"thisisavalidpassword1234!!", // valid, but we test invalid here
+		}
+		for i, p := range passwords {
+			if i == len(passwords)-1 {
+				continue
+			}
+			reqBody := map[string]string{"activation_proof": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "password": p}
+			b, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest(http.MethodPost, "/v1/activation/complete", bytes.NewReader(b))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Errorf("expected 422 for password %s, got %d", p, rec.Code)
+			}
+		}
+	})
+
+	t.Run("success consumes proof and calls auth admin", func(t *testing.T) {
+		pool, teardown, _, profileID, invID := setupActivationIntegrationTest(t)
+		defer teardown()
+		
+		createdAuthID := uuid.New()
+		admin := &mockAuthAdmin{createdID: createdAuthID}
+		handler := newActivationHandler(pool, []byte("test-pepper"), &mockOTPProvider{}, admin, time.Now)
+		
+		adminPool, _ := pgxpool.New(context.Background(), os.Getenv("SYSAP_TEST_DATABASE_URL"))
+		_, err := adminPool.Exec(context.Background(), "insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values ($1, 'authenticated', 'authenticated', $2, '{}'::jsonb, '{}'::jsonb, now(), now())", createdAuthID, "fake-" + createdAuthID.String() + "@example.test")
+		adminPool.Close()
+		if err != nil {
+			t.Fatalf("failed to insert mock auth user: %v", err)
+		}
+		
+		// Setup challenge and proof manually in DB to bypass start/verify for this test
+		proofHex := "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d1a2b3c4d5e6f7a8b"
+		mac := hmac.New(sha256.New, []byte("test-pepper"))
+		mac.Write([]byte(proofHex))
+		hashedProof := mac.Sum(nil)
+		
+		err = pool.WithTransaction(context.Background(), func(tx pgx.Tx) error {
+			_, e := tx.Exec(context.Background(), `
+				insert into app.activation_challenges(athlete_profile_id, invitation_id, otp_hmac, expires_at, activation_proof_hmac, proof_expires_at) 
+				values($1, $2, 'dummy', now() + interval '10 minute', $3, now() + interval '10 minute')`, profileID, invID, hashedProof)
+			return e
+		})
+		if err != nil {
+			t.Fatalf("failed to insert challenge: %v", err)
+		}
+		
+		reqBody := map[string]string{"activation_proof": proofHex, "password": "ValidPassword1234!!"}
+		b, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/v1/activation/complete", bytes.NewReader(b))
+		rec := httptest.NewRecorder()
+		
+		handler.ServeHTTP(rec, req)
+		
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", rec.Code)
+		}
+		
+		// Verify proof cannot be reused
+		req2 := httptest.NewRequest(http.MethodPost, "/v1/activation/complete", bytes.NewReader(b))
+		rec2 := httptest.NewRecorder()
+		handler.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusUnauthorized { // Because proof is not found -> invalid_proof -> fail()
+			t.Errorf("expected 401 Unauthorized on reuse, got %d", rec2.Code)
 		}
 	})
 }

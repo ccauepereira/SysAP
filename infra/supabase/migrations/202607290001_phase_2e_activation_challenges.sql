@@ -30,8 +30,21 @@ create policy select_activation_challenges on app.activation_challenges for sele
 create policy insert_activation_challenges on app.activation_challenges for insert to sysap_api with check (true);
 create policy update_activation_challenges on app.activation_challenges for update to sysap_api using (true);
 
-create policy select_athlete_profile_for_activation on app.athlete_profiles for select to sysap_api using (status = 'pending_activation' and current_setting('sysap.activation_flow', true) = 'true');
-create policy select_activation_invitation_for_activation on app.activation_invitations for select to sysap_api using (status = 'pending' and current_setting('sysap.activation_flow', true) = 'true');
+create policy select_athlete_profile_for_activation on app.athlete_profiles for select to sysap_api using (status in ('pending_activation', 'activated') and current_setting('sysap.activation_flow', true) = 'true');
+create policy select_activation_invitation_for_activation on app.activation_invitations for select to sysap_api using (status in ('pending', 'consumed') and current_setting('sysap.activation_flow', true) = 'true');
 
 create index athlete_profiles_enrollment_activation_idx on app.athlete_profiles(enrollment_number) where status = 'pending_activation';
+
+grant insert on table app.profiles to sysap_api;
+create policy insert_profile_for_activation on app.profiles for insert to sysap_api with check (current_setting('sysap.activation_flow', true) = 'true');
+
+grant insert on table app.organization_memberships to sysap_api;
+create policy insert_membership_for_activation on app.organization_memberships for insert to sysap_api with check (current_setting('sysap.activation_flow', true) = 'true');
+
+grant update on table app.athlete_profiles to sysap_api;
+create policy update_athlete_profile_for_activation on app.athlete_profiles for update to sysap_api using (current_setting('sysap.activation_flow', true) = 'true') with check (true);
+
+grant update on table app.activation_invitations to sysap_api;
+create policy update_activation_invitation_for_activation on app.activation_invitations for update to sysap_api using (current_setting('sysap.activation_flow', true) = 'true') with check (true);
+
 commit;

@@ -1,17 +1,20 @@
 package identity
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/httpserver"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
 )
@@ -19,46 +22,50 @@ import (
 var activationEnrollment = regexp.MustCompile(`^[0-9]{10}$`)
 var activationCode = regexp.MustCompile(`^[0-9]{6}$`)
 
-type OTPProvider interface {
-	NewCode() (string, error)
-}
-type localOTPProvider struct{}
 
-func (localOTPProvider) NewCode() (string, error) {
-	var b [6]byte
-	if _, e := rand.Read(b[:]); e != nil {
-		return "", e
-	}
-	for i := range b {
-		b[i] = '0' + b[i]%10
-	}
-	return string(b[:]), nil
-}
 
 type activationHandler struct {
 	db     *database.Pool
 	pepper []byte
 	otp    OTPProvider
 	now    func() time.Time
+	admin  SupabaseAuthAdmin
 }
 
-func newActivationHandler(db *database.Pool, pepper []byte, otp OTPProvider, now func() time.Time) http.Handler {
-	return &activationHandler{db: db, pepper: pepper, otp: otp, now: now}
+func newActivationHandler(db *database.Pool, pepper []byte, otp OTPProvider, admin SupabaseAuthAdmin, now func() time.Time) http.Handler {
+	return &activationHandler{db: db, pepper: pepper, otp: otp, admin: admin, now: now}
 }
 
 func NewActivationHandler(db *database.Pool, pepper string) http.Handler {
-	return newActivationHandler(db, []byte(pepper), localOTPProvider{}, time.Now)
+	provider := os.Getenv("SYSAP_SMS_PROVIDER")
+	var otp OTPProvider
+	if provider == "twilio_verify" {
+		twilio, err := NewTwilioOTPProvider()
+		if err == nil {
+			otp = twilio
+		} else {
+			otp = localOTPProvider{}
+		}
+	} else {
+		otp = localOTPProvider{}
+	}
+	return newActivationHandler(db, []byte(pepper), otp, NewSupabaseAuthAdmin(), time.Now)
 }
 func (h *activationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(h.pepper) == 0 {
 		h.unavailable(w, r)
 		return
 	}
-	if r.URL.Path == "/v1/activation/start" {
+	switch r.URL.Path {
+	case "/v1/activation/start":
 		h.start(w, r)
-		return
+	case "/v1/activation/verify":
+		h.verify(w, r)
+	case "/v1/activation/complete":
+		h.complete(w, r)
+	default:
+		h.fail(w, r)
 	}
-	h.verify(w, r)
 }
 func (h *activationHandler) start(w http.ResponseWriter, r *http.Request) {
 	var q struct {
@@ -71,11 +78,12 @@ func (h *activationHandler) start(w http.ResponseWriter, r *http.Request) {
 	}
 	code, e := h.otp.NewCode()
 	if e == nil {
-		_ = h.db.WithTransaction(r.Context(), func(tx pgx.Tx) error {
+		err := h.db.WithTransaction(r.Context(), func(tx pgx.Tx) error {
 			now := h.now().UTC()
 			var p, i uuid.UUID
 			_, _ = tx.Exec(r.Context(), `set local sysap.activation_flow = 'true'`)
-			e := tx.QueryRow(r.Context(), `select p.id, i.id from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id where p.enrollment_number=$1 and p.status='pending_activation' and i.status='pending' and i.expires_at>$2 limit 1`, q.Enrollment, now).Scan(&p, &i)
+			var phone string
+			e := tx.QueryRow(r.Context(), `select p.id, i.id, p.phone_e164 from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id where p.enrollment_number=$1 and p.status='pending_activation' and i.status='pending' and i.expires_at>$2 limit 1`, q.Enrollment, now).Scan(&p, &i, &phone)
 			if e != nil {
 				return nil
 			}
@@ -101,9 +109,24 @@ func (h *activationHandler) start(w http.ResponseWriter, r *http.Request) {
 				resendCount = 0
 				resendWindow = now
 			}
+			if h.otp.IsExternal() {
+				if err := h.otp.Start(r.Context(), phone); err != nil {
+					return err // Wait, if provider fails, return err to fail the tx? But we should return 503 instead of 202?
+					// But start must always return 202. Let's just return nil to commit the tx, or fail the tx but still return 202?
+					// Wait, the prompt: "erros do provedor retornam resposta genérica 503 verification_unavailable".
+					// So if Start fails, we should return 503! But for `/start`, "Sempre retorna 202 genérico"!
+					// Let's just return err so the handler can return 503.
+				}
+			}
 			_, e = tx.Exec(r.Context(), `insert into app.activation_challenges(athlete_profile_id, invitation_id, otp_hmac, expires_at, resend_count, resend_window_started_at) values($1,$2,$3,$4,$5,$6)`, p, i, h.mac(code), now.Add(10*time.Minute), resendCount, resendWindow)
 			return e
 		})
+		if err != nil {
+			if err.Error() == "provider_error" {
+				h.unavailable(w, r)
+				return
+			}
+		}
 	}
 	h.accept(w)
 }
@@ -121,15 +144,29 @@ func (h *activationHandler) verify(w http.ResponseWriter, r *http.Request) {
 	e := h.db.WithTransaction(r.Context(), func(tx pgx.Tx) error {
 		now := h.now().UTC()
 		var id uuid.UUID
+		var phone string
 		var mac []byte
 		_, _ = tx.Exec(r.Context(), `set local sysap.activation_flow = 'true'`)
-		e := tx.QueryRow(r.Context(), `select c.challenge_id,c.otp_hmac from app.activation_challenges c join app.athlete_profiles p on p.id=c.athlete_profile_id where p.enrollment_number=$1 and c.invalidated_at is null and c.consumed_at is null and c.expires_at>$2 and c.attempt_count<5 for update of c`, q.Enrollment, now).Scan(&id, &mac)
+		e := tx.QueryRow(r.Context(), `select c.challenge_id,c.otp_hmac,p.phone_e164 from app.activation_challenges c join app.athlete_profiles p on p.id=c.athlete_profile_id where p.enrollment_number=$1 and c.invalidated_at is null and c.consumed_at is null and c.expires_at>$2 and c.attempt_count<5 for update of c`, q.Enrollment, now).Scan(&id, &mac, &phone)
 		if e != nil {
 			return errors.New("failed")
 		}
-		if !hmac.Equal(mac, h.mac(q.Code)) {
+		
+		if h.otp.IsExternal() {
+			if err := h.otp.Verify(r.Context(), phone, q.Code); err != nil {
+				if err.Error() == "provider_error" {
+					return err
+				}
+				hmacFailed = true
+			}
+		} else {
+			if !hmac.Equal(mac, h.mac(q.Code)) {
+				hmacFailed = true
+			}
+		}
+
+		if hmacFailed {
 			_, _ = tx.Exec(r.Context(), `update app.activation_challenges set attempt_count=attempt_count+1 where challenge_id=$1`, id)
-			hmacFailed = true
 			return nil
 		}
 		var b [24]byte
@@ -140,12 +177,137 @@ func (h *activationHandler) verify(w http.ResponseWriter, r *http.Request) {
 		_, e = tx.Exec(r.Context(), `update app.activation_challenges set consumed_at=$1,activation_proof_hmac=$2,proof_expires_at=$3 where challenge_id=$4`, now, h.mac(proof), now.Add(10*time.Minute), id)
 		return e
 	})
+	if e != nil {
+		if e.Error() == "provider_error" {
+			h.unavailable(w, r)
+			return
+		}
+	}
 	if e != nil || hmacFailed {
 		h.fail(w, r)
 		return
 	}
 	writeJSON(w, http.StatusOK, activationVerifyResponse{ActivationProof: proof})
 }
+
+func (h *activationHandler) complete(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		Proof    string `json:"activation_proof"`
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&q) != nil || !isValidPassword(q.Password) {
+		h.validationFailed(w, r)
+		return
+	}
+	proofBytes, err := hex.DecodeString(q.Proof)
+	if err != nil || len(proofBytes) != 24 {
+		h.fail(w, r)
+		return
+	}
+
+	type result struct {
+		ProfileID      uuid.UUID `json:"profile_id"`
+		Enrollment     string    `json:"enrollment_number"`
+		Role           string    `json:"role"`
+		OrganizationID uuid.UUID `json:"organization_id"`
+	}
+	var res result
+
+	e := h.db.WithTransaction(r.Context(), func(tx pgx.Tx) error {
+		now := h.now().UTC()
+		_, _ = tx.Exec(r.Context(), `set local sysap.activation_flow = 'true'`)
+
+		var challengeID, profileID, invID, orgID uuid.UUID
+		var phone, enrollment, name string
+
+		e := tx.QueryRow(r.Context(), `
+			select c.challenge_id, c.athlete_profile_id, c.invitation_id, p.phone_e164, p.enrollment_number, p.display_name, i.organization_id
+			from app.activation_challenges c
+			join app.athlete_profiles p on p.id = c.athlete_profile_id
+			join app.activation_invitations i on i.id = c.invitation_id
+			where c.activation_proof_hmac = $1 
+			  and c.proof_expires_at > $2 
+			  and c.proof_consumed_at is null
+			  and p.status = 'pending_activation'
+			for update of c`, h.mac(q.Proof), now).Scan(&challengeID, &profileID, &invID, &phone, &enrollment, &name, &orgID)
+		if e != nil {
+			fmt.Printf("Query error in complete: %v\n", e)
+			return errors.New("invalid_proof")
+		}
+
+		authID, authErr := h.admin.CreateUser(r.Context(), phone, q.Password)
+		if authErr != nil {
+			return errors.New("auth_failed")
+		}
+
+		_, e = tx.Exec(r.Context(), `
+			insert into app.profiles (id, auth_user_id, full_name, created_at, updated_at) 
+			values ($1, $2, $3, $4, $4)`, profileID, authID, name, now)
+		if e != nil {
+			fmt.Printf("Error inserting profile: %v\n", e)
+			_ = h.admin.DeleteUser(context.Background(), authID)
+			return errors.New("profile_failed")
+		}
+
+		_, e = tx.Exec(r.Context(), `
+			insert into app.organization_memberships (organization_id, profile_id, role, status, activated_at, created_at, updated_at) 
+			values ($1, $2, 'athlete', 'active', $3, $3, $3)`, orgID, profileID, now)
+		if e != nil {
+			fmt.Printf("Error inserting membership: %v\n", e)
+			_ = h.admin.DeleteUser(context.Background(), authID)
+			return errors.New("membership_failed")
+		}
+
+		_, e = tx.Exec(r.Context(), `update app.athlete_profiles set status='activated', updated_at=$1 where id=$2`, now, profileID)
+		if e != nil {
+			fmt.Printf("Error updating athlete profile: %v\n", e)
+			_ = h.admin.DeleteUser(context.Background(), authID)
+			return errors.New("profile_failed")
+		}
+
+		_, e = tx.Exec(r.Context(), `update app.activation_invitations set status='consumed', updated_at=$1 where id=$2`, now, invID)
+		if e != nil {
+			fmt.Printf("Error updating invitation: %v\n", e)
+			_ = h.admin.DeleteUser(context.Background(), authID)
+			return errors.New("invitation_failed")
+		}
+
+		_, e = tx.Exec(r.Context(), `update app.activation_challenges set proof_consumed_at=$1 where challenge_id=$2`, now, challengeID)
+		if e != nil {
+			fmt.Printf("Error updating challenge: %v\n", e)
+			_ = h.admin.DeleteUser(context.Background(), authID)
+			return errors.New("challenge_failed")
+		}
+
+		res = result{
+			ProfileID:      profileID,
+			Enrollment:     enrollment,
+			Role:           "athlete",
+			OrganizationID: orgID,
+		}
+		return nil
+	})
+
+	if e != nil {
+		fmt.Printf("WithTransaction error: %v\n", e)
+		if e.Error() == "invalid_proof" {
+			h.fail(w, r)
+			return
+		}
+		if e.Error() == "auth_failed" {
+			h.unavailable(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "resource_conflict", "message": "Failed to complete activation"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
 func (h *activationHandler) mac(s string) []byte {
 	m := hmac.New(sha256.New, h.pepper)
 	m.Write([]byte(s))
@@ -161,6 +323,15 @@ type activationVerifyResponse struct {
 func (h *activationHandler) accept(w http.ResponseWriter) {
 	writeJSON(w, http.StatusAccepted, activationStartResponse{Status: "accepted"})
 }
+func (h *activationHandler) validationFailed(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "validation_failed",
+		"message": "The request violates business or format rules",
+	})
+}
+
 func (h *activationHandler) fail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusUnauthorized, errorResponse{
 		Error: struct {
