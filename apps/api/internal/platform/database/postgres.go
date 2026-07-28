@@ -61,6 +61,23 @@ func (p *Pool) Ping(ctx context.Context) error {
 	return p.pool.Ping(ctx)
 }
 
+// WithTransaction is reserved for public flows that have no authenticated
+// subject yet, such as local activation OTP verification.
+func (p *Pool) WithTransaction(ctx context.Context, action func(pgx.Tx) error) error {
+	if action == nil {
+		return ErrNilTransactionAction
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := action(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // WithAuthenticatedContext executes action in a single transaction after
 // setting local identity GUCs with fixed, parameterized SQL. GUC values cannot
 // outlive the transaction or be interpolated into a query.
