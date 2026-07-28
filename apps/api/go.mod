@@ -2,7 +2,10 @@ module github.com/ccauepereira/SysAP/apps/api
 
 go 1.26.5
 
-require github.com/jackc/pgx/v5 v5.9.2
+require (
+	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.9.2
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

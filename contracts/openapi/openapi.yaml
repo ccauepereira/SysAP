@@ -731,8 +731,9 @@ components:
       in: header
       required: true
       description: >-
-        Organizacao selecionada pelo ator. E somente contexto nao confiavel; a
-        API exige membership ativa e permissao no estado autoritativo.
+        Seletor sujeito a autorizacao, obrigatorio somente para endpoints
+        tenant-bound futuros. Nao e exigido em /healthz, /readyz ou futuro
+        /v1/me. Um formato invalido ou malformado produz invalid_request.
       schema:
         type: string
         format: uuid
