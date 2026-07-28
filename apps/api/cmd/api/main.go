@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ccauepereira/SysAP/apps/api/internal/identity"
+	"github.com/ccauepereira/SysAP/apps/api/internal/platform/auth"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/config"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/httpserver"
@@ -35,6 +37,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
+	var databasePool *database.Pool
 	var databaseChecker httpserver.DatabaseChecker = database.Unavailable{}
 	if configuration.DatabaseURL == "" {
 		logger.Info("database is not configured; readiness will remain unavailable")
@@ -44,11 +47,29 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			logger.Warn("database configuration is invalid; readiness will remain unavailable")
 		} else {
 			databaseChecker = pool
+			databasePool = pool
 			defer pool.Close()
 		}
 	}
 
-	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout)
+	var authMiddleware func(http.Handler) http.Handler
+	if configuration.Auth.Configured() {
+		tokenVerifier, err := auth.NewTokenVerifier(configuration.Auth)
+		if err != nil {
+			return fmt.Errorf("configure token verifier: %w", err)
+		}
+		sessionResolver, err := auth.NewPostgresSessionResolver(databasePool)
+		if err != nil {
+			return fmt.Errorf("configure session resolver: %w", err)
+		}
+		authMiddleware = auth.Middleware(tokenVerifier, sessionResolver)
+	} else {
+		logger.Warn("authentication is not configured; protected routes will be inaccessible")
+	}
+
+	meHandler := identity.NewMeHandler(databasePool, logger)
+
+	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler)
 	server := httpserver.NewServer(configuration.HTTPAddress, handler)
 	serverErrors := make(chan error, 1)
 

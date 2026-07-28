@@ -26,14 +26,22 @@ type handler struct {
 	logger              *slog.Logger
 }
 
-func New(database DatabaseChecker, logger *slog.Logger, databasePingTimeout time.Duration) http.Handler {
-	return newHandler(database, logger, databasePingTimeout, newRequestID)
+func New(
+	database DatabaseChecker,
+	logger *slog.Logger,
+	databasePingTimeout time.Duration,
+	authMiddleware func(http.Handler) http.Handler,
+	meHandler http.Handler,
+) http.Handler {
+	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, newRequestID)
 }
 
 func newHandler(
 	database DatabaseChecker,
 	logger *slog.Logger,
 	databasePingTimeout time.Duration,
+	authMiddleware func(http.Handler) http.Handler,
+	meHandler http.Handler,
 	generateRequestID requestIDGenerator,
 ) http.Handler {
 	handler := &handler{
@@ -45,6 +53,16 @@ func newHandler(
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.health)
 	mux.HandleFunc("GET /readyz", handler.readiness)
+
+	if authMiddleware != nil && meHandler != nil {
+		mux.Handle("GET /v1/me", authMiddleware(meHandler))
+	} else if meHandler != nil {
+		mux.Handle("GET /v1/me", meHandler)
+	} else {
+		mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+			WriteAuthenticationRequired(w, r.Context())
+		})
+	}
 
 	return withRequestContext(logRequests(mux, logger), generateRequestID)
 }
