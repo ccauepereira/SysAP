@@ -152,44 +152,61 @@ paths:
           $ref: "#/components/responses/ResourceConflict"
         "500":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/athlete/activate:
+  /v1/activation/start:
     post:
-      operationId: activateAthleteAccount
+      operationId: startActivation
       tags:
-        - Autenticacao
-      summary: Ativar conta de atleta
+        - Convites de atleta
+      summary: Iniciar ativação local de atleta
       description: >-
-        Verifica matricula e OTP de uma identidade previamente provisionada e
-        registra a senha escolhida pelo atleta. A operacao nao cria usuarios e
-        nao inicia sessao; apos o sucesso, o atleta faz login explicitamente.
-        Falhas de matricula, OTP, convite ou estado usam a mesma resposta. A
-        idempotencia usa desafio/estado e projecao nao secreta; senha, OTP e
-        qualquer derivado nunca sao persistidos para comparar requests.
-      x-sysap-implementation-status: planned
+        Inicia o fluxo de ativação, gerando um OTP para a matrícula informada.
+        Sempre retorna 202 Accepted para não enumerar matrículas válidas.
+        A geração é feita através de um provedor de OTP local.
       security: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ActivateAthleteRequest"
+              $ref: "#/components/schemas/ActivationStartRequest"
       responses:
-        "204":
-          $ref: "#/components/responses/CommandCompleted"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+        "202":
+          description: Solicitação aceita
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+  /v1/activation/verify:
+    post:
+      operationId: verifyActivation
+      tags:
+        - Convites de atleta
+      summary: Verificar OTP
+      description: >-
+        Verifica se o OTP fornecido corresponde à matrícula e não expirou.
+        Retorna uma prova de ativação (activation_proof) que pode ser usada depois.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationVerifyRequest"
+      responses:
+        "200":
+          description: OTP validado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationVerifyResponse"
         "401":
-          $ref: "#/components/responses/InvalidCredentials"
-        "409":
-          $ref: "#/components/responses/ResourceConflict"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+          $ref: "#/components/responses/AuthenticationRequired"
         "503":
-          $ref: "#/components/responses/ServiceUnavailable"
+          $ref: "#/components/responses/IdentityVerificationUnavailable"
   /v1/auth/athlete/login:
     post:
       operationId: loginAthlete
@@ -1270,20 +1287,34 @@ components:
           type: string
           format: date-time
           description: Data de expiração do convite.
-    ActivateAthleteRequest:
+    ActivationStartRequest:
       type: object
       additionalProperties: false
       required:
         - enrollment_number
-        - otp
-        - password
       properties:
         enrollment_number:
           $ref: "#/components/schemas/EnrollmentNumber"
-        otp:
+    ActivationVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - enrollment_number
+        - code
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        code:
           $ref: "#/components/schemas/OTPInput"
-        password:
-          $ref: "#/components/schemas/PasswordInput"
+    ActivationVerifyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - activation_proof
+      properties:
+        activation_proof:
+          type: string
+          description: Prova temporária de validação de OTP para uso subsequente.
     AthleteLoginRequest:
       type: object
       additionalProperties: false
