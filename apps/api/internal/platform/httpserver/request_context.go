@@ -13,3 +13,9 @@ func requestIDFromContext(ctx context.Context) string {
 	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
 	return requestID
 }
+
+// RequestIDFromContext exposes only the server-generated correlation ID to
+// reusable middleware. Authentication state is intentionally not stored here.
+func RequestIDFromContext(ctx context.Context) string {
+	return requestIDFromContext(ctx)
+}

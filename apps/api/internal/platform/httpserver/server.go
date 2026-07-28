@@ -101,6 +101,20 @@ func writeJSON(w http.ResponseWriter, status int, response any) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// WriteAuthenticationRequired is the sole reusable representation of an
+// authentication failure. Its input is a request context rather than an error
+// so callers cannot accidentally disclose verifier or database details.
+func WriteAuthenticationRequired(w http.ResponseWriter, ctx context.Context) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	writeJSON(w, http.StatusUnauthorized, errorResponse{
+		Error: errorDetail{
+			Code:      "authentication_required",
+			Message:   "authentication is required",
+			RequestID: requestIDFromContext(ctx),
+		},
+	})
+}
+
 type healthResponse struct {
 	Status  string `json:"status"`
 	Service string `json:"service"`

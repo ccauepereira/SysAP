@@ -26,6 +26,13 @@ func withRequestContext(next http.Handler, generateRequestID requestIDGenerator)
 	})
 }
 
+// WithRequestContext is the standard outer wrapper for reusable middleware
+// composed outside this package. It preserves the server-generated request ID
+// and the common no-store JSON response headers.
+func WithRequestContext(next http.Handler) http.Handler {
+	return withRequestContext(next, newRequestID)
+}
+
 func logRequests(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
