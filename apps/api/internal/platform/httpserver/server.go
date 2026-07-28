@@ -35,8 +35,9 @@ func New(
 	invitationHandler http.Handler,
 	activationHandler http.Handler,
 	loginHandler http.Handler,
+	sessionHandler http.Handler,
 ) http.Handler {
-	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, newRequestID)
+	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler, newRequestID)
 }
 
 func newHandler(
@@ -48,6 +49,7 @@ func newHandler(
 	invitationHandler http.Handler,
 	activationHandler http.Handler,
 	loginHandler http.Handler,
+	sessionHandler http.Handler,
 	generateRequestID requestIDGenerator,
 ) http.Handler {
 	handler := &handler{
@@ -67,6 +69,9 @@ func newHandler(
 	if loginHandler != nil {
 		mux.Handle("POST /v1/auth/login", loginHandler)
 	}
+	if sessionHandler != nil {
+		mux.Handle("POST /v1/auth/refresh", sessionHandler)
+	}
 
 	if authMiddleware != nil {
 		if meHandler != nil {
@@ -75,12 +80,18 @@ func newHandler(
 		if invitationHandler != nil {
 			mux.Handle("POST /v1/organizations/{organization_id}/athlete-invitations", authMiddleware(invitationHandler))
 		}
+		if sessionHandler != nil {
+			mux.Handle("POST /v1/auth/logout", authMiddleware(sessionHandler))
+			mux.Handle("POST /v1/auth/logout-all", authMiddleware(sessionHandler))
+		}
 	} else {
 		notAuthFunc := func(w http.ResponseWriter, r *http.Request) {
 			WriteAuthenticationRequired(w, r.Context())
 		}
 		mux.HandleFunc("GET /v1/me", notAuthFunc)
 		mux.HandleFunc("POST /v1/organizations/{organization_id}/athlete-invitations", notAuthFunc)
+		mux.HandleFunc("POST /v1/auth/logout", notAuthFunc)
+		mux.HandleFunc("POST /v1/auth/logout-all", notAuthFunc)
 	}
 
 	return withRequestContext(logRequests(mux, logger), generateRequestID)

@@ -268,7 +268,7 @@ func TestPostgresFoundation(t *testing.T) {
 	t.Run("returns the exact ready response without connection details", func(t *testing.T) {
 		var logOutput bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
-		handler := httpserver.New(pool, logger, 2*time.Second, nil, nil, nil, nil, nil)
+		handler := httpserver.New(pool, logger, 2*time.Second, nil, nil, nil, nil, nil, nil)
 		response := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 

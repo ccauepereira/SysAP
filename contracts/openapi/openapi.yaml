@@ -439,7 +439,7 @@ paths:
         nao persiste resposta idempotente contendo tokens. O token no corpo e
         uma credencial e nunca deve ser registrado. Falhas nao informam se a
         sessao expirou, foi revogada ou reutilizada.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       security: []
       requestBody:
         required: true
@@ -459,16 +459,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout:
     post:
       operationId: logoutSession
@@ -480,16 +472,12 @@ paths:
         sign-out ao Auth. Toda rota protegida consulta essa revogacao porque o
         access JWT pode verificar ate exp. O Web remove cookies no BFF e o
         mobile remove material local mesmo se a resposta remota for ambigua.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       responses:
         "204":
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout-all:
     post:
       operationId: logoutAllSessions
@@ -502,16 +490,12 @@ paths:
         organizacao ou papel do cliente. O primeiro sucesso retorna 204; retry
         com o mesmo bearer ja revogado pode retornar 401, que o cliente trata
         como estado terminal e ainda assim remove seu material local.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       responses:
         "204":
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/recovery/request:
     post:
       operationId: requestAthleteAccountRecovery

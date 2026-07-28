@@ -33,6 +33,10 @@ type supabasePasswordIdentityProvider struct {
 	auth *supabaseAuthAdmin
 }
 
+type supabaseSessionIdentityProvider struct {
+	auth *supabaseAuthAdmin
+}
+
 // NewSupabasePasswordIdentityProvider keeps password authentication behind the
 // API. Neither browser nor mobile code calls Supabase Auth directly.
 func NewSupabasePasswordIdentityProvider() PasswordIdentityProvider {
@@ -42,6 +46,17 @@ func NewSupabasePasswordIdentityProvider() PasswordIdentityProvider {
 		return unavailablePasswordIdentityProvider{}
 	}
 	return &supabasePasswordIdentityProvider{auth: auth}
+}
+
+// NewSupabaseSessionIdentityProvider is the server-side boundary for refresh.
+// The client never receives the Auth endpoint or service-role credential.
+func NewSupabaseSessionIdentityProvider() SessionIdentityProvider {
+	baseURL, roleKey := os.Getenv("SYSAP_SUPABASE_AUTH_URL"), os.Getenv("SYSAP_SUPABASE_SERVICE_ROLE_KEY")
+	auth, err := newSupabaseAuthAdmin(baseURL, roleKey, os.Getenv("SYSAP_ENV"), nil)
+	if err != nil {
+		return unavailableSessionIdentityProvider{}
+	}
+	return &supabaseSessionIdentityProvider{auth: auth}
 }
 
 func (p *supabasePasswordIdentityProvider) Authenticate(ctx context.Context, expectedSubject uuid.UUID, password string) (ProviderSession, error) {
@@ -116,6 +131,57 @@ func (p *supabasePasswordIdentityProvider) Authenticate(ctx context.Context, exp
 		SubjectID: expectedSubject, SessionID: sessionID, AAL: aal,
 		AccessToken: result.AccessToken, RefreshToken: result.RefreshToken, ExpiresIn: result.ExpiresIn,
 	}, nil
+}
+
+func (p *supabaseSessionIdentityProvider) Refresh(ctx context.Context, refreshToken string) (ProviderSession, error) {
+	if p == nil || p.auth == nil || refreshToken == "" {
+		return ProviderSession{}, errLoginDenied
+	}
+	body, err := json.Marshal(struct {
+		RefreshToken string `json:"refresh_token"`
+	}{RefreshToken: refreshToken})
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	endpoint := p.auth.baseURL.JoinPath("token")
+	query := endpoint.Query()
+	query.Set("grant_type", "refresh_token")
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	req.Header.Set("apikey", p.auth.roleKey)
+	req.Header.Set("Authorization", "Bearer "+p.auth.roleKey)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := p.auth.client.Do(req)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return ProviderSession{}, errLoginDenied
+	}
+	responseBody, err := readBounded(response.Body)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		User         struct {
+			ID uuid.UUID `json:"id"`
+		} `json:"user"`
+	}
+	if json.Unmarshal(responseBody, &result) != nil || result.User.ID == uuid.Nil || result.AccessToken == "" || result.RefreshToken == "" || result.ExpiresIn <= 0 {
+		return ProviderSession{}, errLoginDenied
+	}
+	sessionID, aal, err := parseProviderSession(result.AccessToken, result.User.ID)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	return ProviderSession{SubjectID: result.User.ID, SessionID: sessionID, AAL: aal, AccessToken: result.AccessToken, RefreshToken: result.RefreshToken, ExpiresIn: result.ExpiresIn}, nil
 }
 
 func (s *supabaseAuthAdmin) getUser(ctx context.Context, id uuid.UUID, target any) error {

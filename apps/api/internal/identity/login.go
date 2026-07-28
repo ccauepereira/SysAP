@@ -35,6 +35,13 @@ type PasswordIdentityProvider interface {
 	Authenticate(context.Context, uuid.UUID, string) (ProviderSession, error)
 }
 
+// SessionIdentityProvider is deliberately narrower than the password
+// provider: the only client credential it receives is a refresh token held in
+// the request body for the duration of the call.
+type SessionIdentityProvider interface {
+	Refresh(context.Context, string) (ProviderSession, error)
+}
+
 type ProviderSession struct {
 	SubjectID    uuid.UUID
 	SessionID    uuid.UUID
@@ -47,6 +54,12 @@ type ProviderSession struct {
 type unavailablePasswordIdentityProvider struct{}
 
 func (unavailablePasswordIdentityProvider) Authenticate(context.Context, uuid.UUID, string) (ProviderSession, error) {
+	return ProviderSession{}, errLoginDenied
+}
+
+type unavailableSessionIdentityProvider struct{}
+
+func (unavailableSessionIdentityProvider) Refresh(context.Context, string) (ProviderSession, error) {
 	return ProviderSession{}, errLoginDenied
 }
 
@@ -120,8 +133,8 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
-			insert into app.auth_sessions (session_id, profile_id, assurance_level)
-			values ($1, $2, 'aal1')`, session.SessionID, identity.ProfileID); err != nil {
+			insert into app.auth_sessions (session_id, profile_id, organization_id, assurance_level)
+			values ($1, $2, $3, 'aal1')`, session.SessionID, identity.ProfileID, identity.OrganizationID); err != nil {
 			return err
 		}
 		if err := writeLoginAudit(r.Context(), tx, identity, true, "success", "authenticated", fingerprint); err != nil {
