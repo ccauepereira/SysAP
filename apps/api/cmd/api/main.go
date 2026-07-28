@@ -68,8 +68,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	meHandler := identity.NewMeHandler(databasePool, logger)
+	invitationHandler := identity.NewInvitationHandler(databasePool, logger, nil, nil)
 
-	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler)
+	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler)
 	server := httpserver.NewServer(configuration.HTTPAddress, handler)
 	serverErrors := make(chan error, 1)
 

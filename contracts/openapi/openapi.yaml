@@ -98,20 +98,23 @@ paths:
                       code: service_not_ready
                       message: service is not ready
                       request_id: 0123456789abcdef0123456789abcdef
-  /v1/athlete-invitations:
+  /v1/organizations/{organization_id}/athlete-invitations:
     post:
       operationId: createAthleteInvitation
       tags:
         - Convites de atleta
       summary: Pre-cadastrar atleta e iniciar ativacao
       description: >-
-        Cria um convite na organizacao selecionada por X-Organization-ID. O
-        header e apenas contexto nao confiavel: a API exige membership ativa e
-        deriva papel/escopo do banco. Organizacao, papel, estado e identidade
-        tecnica nunca sao aceitos no corpo. Uma repeticao segura nao cria outra
-        identidade nem solicita outro SMS.
+        Cria um convite na organizacao selecionada por organization_id.
+        Requer token de Owner.
       x-sysap-implementation-status: planned
       parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/OrganizationContext"
       requestBody:
@@ -122,48 +125,32 @@ paths:
               $ref: "#/components/schemas/CreateAthleteInvitationRequest"
             examples:
               fictionalAthlete:
-                summary: Atleta e telefone reservados para documentacao
+                summary: Atleta ficticio
                 value:
-                  full_name: Atleta Exemplo
-                  birth_date: "2010-01-15"
-                  phone: "+12025550123"
+                  display_name: "Atleta Exemplo"
+                  phone_e164: "+12025550123"
+                  email: "atleta@example.com"
       responses:
         "201":
-          description: Convite criado e fluxo de provisionamento iniciado.
+          description: Convite criado
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
-            Location:
-              $ref: "#/components/headers/InvitationLocation"
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AthleteInvitationResponse"
-              examples:
-                pendingProvisioning:
-                  summary: Convite ficticio aguardando provisionamento
-                  value:
-                    invitation_id: 10000000-0000-4000-8000-000000000001
-                    enrollment_number: "2026000001"
-                    status: pending_provisioning
-                    created_at: "2026-07-22T15:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/AccessDenied"
-        "404":
-          $ref: "#/components/responses/ResourceNotFound"
         "409":
           $ref: "#/components/responses/ResourceConflict"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
+        "500":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/athlete/activate:
     post:
@@ -1244,35 +1231,45 @@ components:
       type: object
       additionalProperties: false
       required:
-        - full_name
-        - birth_date
-        - phone
+        - display_name
+        - phone_e164
       properties:
-        full_name:
-          $ref: "#/components/schemas/FullNameInput"
-        birth_date:
-          $ref: "#/components/schemas/BirthDateInput"
-        phone:
-          $ref: "#/components/schemas/PhoneE164Input"
+        display_name:
+          type: string
+          minLength: 1
+          description: Nome de exibicao do atleta
+        phone_e164:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+          description: Telefone normalizado em formato E.164
+        email:
+          type: string
+          format: email
+          description: Email opcional do atleta
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
       required:
         - invitation_id
+        - profile_id
         - enrollment_number
         - status
-        - created_at
+        - expires_at
       properties:
         invitation_id:
+          $ref: "#/components/schemas/UUID"
+        profile_id:
           $ref: "#/components/schemas/UUID"
         enrollment_number:
           $ref: "#/components/schemas/EnrollmentNumber"
         status:
-          $ref: "#/components/schemas/InvitationStatus"
-        created_at:
+          type: string
+          enum: [pending_activation]
+          description: O atleta deve ativar a conta com senha e OTP.
+        expires_at:
           type: string
           format: date-time
-          description: Instante UTC de criacao do convite.
+          description: Data de expiração do convite.
     ActivateAthleteRequest:
       type: object
       additionalProperties: false

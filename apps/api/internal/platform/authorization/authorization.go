@@ -94,6 +94,7 @@ func (m Matrix) evaluateAthlete(cap Capability) error {
 type Membership struct {
 	ID             string
 	OrganizationID string
+	ProfileID      string
 	Role           Role
 	Status         string
 }
@@ -115,11 +116,11 @@ func WithTenantContext(
 		membership.OrganizationID = organizationID
 
 		err := tx.QueryRow(ctx, `
-			select id, role, status
+			select id, role, status, profile_id
 			from app.organization_memberships
 			where organization_id = $1
 			  and status = 'active'
-		`, organizationID).Scan(&membership.ID, &membership.Role, &membership.Status)
+		`, organizationID).Scan(&membership.ID, &membership.Role, &membership.Status, &membership.ProfileID)
 
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
