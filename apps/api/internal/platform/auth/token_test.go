@@ -121,10 +121,13 @@ func TestTokenVerifierFailsSafelyForJWKSResponses(t *testing.T) {
 				timeout = time.Second
 			}
 			verifier, err := NewTokenVerifier(config.AuthConfig{
-				Issuer:           "test-issuer",
-				Audience:         "authenticated",
-				JWKSURL:          server.URL,
-				JWKSQueryTimeout: timeout,
+				Issuer:            "test-issuer",
+				Audience:          "authenticated",
+				JWKSURL:           server.URL,
+				JWKSQueryTimeout:  timeout,
+				JWKSCacheTTL:      5 * time.Minute,
+				JWKSMaxBodyLength: 64 * 1024,
+				JWKSMaxKeys:       16,
 			})
 			if err != nil {
 				t.Fatalf("NewTokenVerifier() error = %v", err)
@@ -269,10 +272,13 @@ func writeJWKS(t *testing.T, writer http.ResponseWriter, privateKey jwk.Key) {
 func newTestVerifier(t *testing.T, jwksURL string, now time.Time) *jwtVerifier {
 	t.Helper()
 	verifier, err := newTokenVerifier(config.AuthConfig{
-		Issuer:           "test-issuer",
-		Audience:         "authenticated",
-		JWKSURL:          jwksURL,
-		JWKSQueryTimeout: time.Second,
+		Issuer:            "test-issuer",
+		Audience:          "authenticated",
+		JWKSURL:           jwksURL,
+		JWKSQueryTimeout:  time.Second,
+		JWKSCacheTTL:      5 * time.Minute,
+		JWKSMaxBodyLength: 64 * 1024,
+		JWKSMaxKeys:       16,
 	}, &http.Client{Timeout: time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}, func() time.Time { return now })

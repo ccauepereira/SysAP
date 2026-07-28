@@ -8,21 +8,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/config"
 )
 
 const maxTokenLength = 16 * 1024
-const maxJWKSBodyLength = 64 * 1024
 
 var (
 	// ErrInvalidToken deliberately carries no provider, claim, signature, or
@@ -59,15 +56,14 @@ type TokenVerifier interface {
 type jwtVerifier struct {
 	issuer   string
 	audience string
-	jwksURL  string
-	client   *http.Client
 	now      func() time.Time
+	cache    *jwksCache
 }
 
 // NewTokenVerifier validates complete server-side configuration without doing
 // I/O. A temporarily unavailable JWKS therefore never prevents API startup.
 func NewTokenVerifier(configuration config.AuthConfig) (TokenVerifier, error) {
-	if !configuration.Configured() || configuration.Issuer == "" || configuration.Audience == "" || configuration.JWKSURL == "" || configuration.JWKSQueryTimeout <= 0 {
+	if !configuration.Configured() || configuration.Issuer == "" || configuration.Audience == "" || configuration.JWKSURL == "" || configuration.JWKSQueryTimeout <= 0 || configuration.JWKSCacheTTL <= 0 || configuration.JWKSMaxBodyLength <= 0 || configuration.JWKSMaxKeys <= 0 {
 		return nil, errors.New("JWT verifier configuration is incomplete")
 	}
 
@@ -90,9 +86,8 @@ func newTokenVerifier(configuration config.AuthConfig, client *http.Client, now 
 	return &jwtVerifier{
 		issuer:   configuration.Issuer,
 		audience: configuration.Audience,
-		jwksURL:  configuration.JWKSURL,
-		client:   client,
 		now:      now,
+		cache:    newJWKSCache(configuration.JWKSURL, client, configuration.JWKSMaxBodyLength, configuration.JWKSMaxKeys, configuration.JWKSCacheTTL, now),
 	}, nil
 }
 
@@ -102,7 +97,7 @@ func (v *jwtVerifier) Verify(ctx context.Context, rawToken string) (VerifiedToke
 		return VerifiedToken{}, ErrInvalidToken
 	}
 
-	key, err := v.fetchKey(ctx, header.KID)
+	key, err := v.cache.GetKey(ctx, header.KID)
 	if err != nil {
 		return VerifiedToken{}, err
 	}
@@ -149,40 +144,6 @@ func parseProtectedHeader(rawToken string) (protectedHeader, error) {
 		return protectedHeader{}, ErrInvalidToken
 	}
 	return header, nil
-}
-
-func (v *jwtVerifier) fetchKey(ctx context.Context, kid string) (jwk.Key, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
-	if err != nil {
-		return nil, ErrTokenVerificationUnavailable
-	}
-	request.Header.Set("Accept", "application/jwk-set+json, application/json")
-
-	response, err := v.client.Do(request)
-	if err != nil {
-		return nil, ErrTokenVerificationUnavailable
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, ErrTokenVerificationUnavailable
-	}
-
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxJWKSBodyLength+1))
-	if err != nil || len(body) == 0 || len(body) > maxJWKSBodyLength {
-		return nil, ErrTokenVerificationUnavailable
-	}
-	set, err := jwk.Parse(body, jwk.WithMaxKeys(16), jwk.WithRejectDuplicateKID(true))
-	if err != nil || set.Len() == 0 {
-		return nil, ErrTokenVerificationUnavailable
-	}
-	key, found := set.LookupKeyID(kid)
-	if !found {
-		return nil, ErrInvalidToken
-	}
-	if algorithm, hasAlgorithm := key.Algorithm(); hasAlgorithm && algorithm != jwa.ES256() {
-		return nil, ErrInvalidToken
-	}
-	return key, nil
 }
 
 func claimsFromToken(token jwt.Token, issuer, audience string, now time.Time) (VerifiedToken, error) {

@@ -16,6 +16,9 @@ const (
 	defaultShutdownTimeout     = 10 * time.Second
 	defaultDatabasePingTimeout = 2 * time.Second
 	defaultJWKSQueryTimeout    = 2 * time.Second
+	defaultJWKSCacheTTL        = 5 * time.Minute
+	defaultJWKSMaxBodyLength   = 64 * 1024
+	defaultJWKSMaxKeys         = 16
 )
 
 type Config struct {
@@ -31,10 +34,13 @@ type Config struct {
 // first protected route is registered, but a partially supplied configuration
 // is rejected during process startup.
 type AuthConfig struct {
-	Issuer           string
-	Audience         string
-	JWKSURL          string
-	JWKSQueryTimeout time.Duration
+	Issuer            string
+	Audience          string
+	JWKSURL           string
+	JWKSQueryTimeout  time.Duration
+	JWKSCacheTTL      time.Duration
+	JWKSMaxBodyLength int64
+	JWKSMaxKeys       int
 }
 
 func (c AuthConfig) Configured() bool {
@@ -99,6 +105,21 @@ func authConfigFromEnvironment(environment string) (AuthConfig, error) {
 		return AuthConfig{}, err
 	}
 
+	cacheTTL, err := durationFromEnvironment("SYSAP_AUTH_JWKS_CACHE_TTL", defaultJWKSCacheTTL)
+	if err != nil {
+		return AuthConfig{}, err
+	}
+
+	maxBodyLength, err := intFromEnvironment("SYSAP_AUTH_JWKS_MAX_BODY_LENGTH", defaultJWKSMaxBodyLength)
+	if err != nil || maxBodyLength <= 0 {
+		return AuthConfig{}, fmt.Errorf("SYSAP_AUTH_JWKS_MAX_BODY_LENGTH must be greater than zero")
+	}
+
+	maxKeys, err := intFromEnvironment("SYSAP_AUTH_JWKS_MAX_KEYS", defaultJWKSMaxKeys)
+	if err != nil || maxKeys <= 0 {
+		return AuthConfig{}, fmt.Errorf("SYSAP_AUTH_JWKS_MAX_KEYS must be greater than zero")
+	}
+
 	parsedURL, err := url.Parse(jwksURL)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
 		return AuthConfig{}, fmt.Errorf("SYSAP_AUTH_JWKS_URL must be an absolute URL without credentials, query, or fragment")
@@ -108,10 +129,13 @@ func authConfigFromEnvironment(environment string) (AuthConfig, error) {
 	}
 
 	return AuthConfig{
-		Issuer:           issuer,
-		Audience:         audience,
-		JWKSURL:          parsedURL.String(),
-		JWKSQueryTimeout: timeout,
+		Issuer:            issuer,
+		Audience:          audience,
+		JWKSURL:           parsedURL.String(),
+		JWKSQueryTimeout:  timeout,
+		JWKSCacheTTL:      cacheTTL,
+		JWKSMaxBodyLength: int64(maxBodyLength),
+		JWKSMaxKeys:       maxKeys,
 	}, nil
 }
 
@@ -144,6 +168,20 @@ func durationFromEnvironment(name string, fallback time.Duration) (time.Duration
 	}
 	if value <= 0 {
 		return 0, fmt.Errorf("%s must be greater than zero", name)
+	}
+
+	return value, nil
+}
+
+func intFromEnvironment(name string, fallback int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer", name)
 	}
 
 	return value, nil
