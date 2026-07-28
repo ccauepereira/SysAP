@@ -48,7 +48,10 @@ async function main() {
   const environment = await database.environment();
 
   const goCache = path.join(runtimeDirectory, "go-cache");
-  await runCommand("go", ["test", "-race", "-v", "./..."], {
+  // API integration packages use one local PostgreSQL instance and create
+  // independent fixtures. Run packages serially so fixture cleanup in one
+  // package cannot overlap another package's assertions.
+  await runCommand("go", ["test", "-race", "-p", "1", "-v", "./..."], {
     cwd: apiDirectory,
     env: safeChildEnvironment({
       GOCACHE: goCache,

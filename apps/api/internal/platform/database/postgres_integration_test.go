@@ -158,7 +158,10 @@ func TestPostgresFoundation(t *testing.T) {
 			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'security_audit_events' and privilege_type in ('SELECT', 'INSERT')) or
 			    (table_name = 'activation_challenges' and privilege_type in ('SELECT', 'INSERT', 'UPDATE'))
-			    or (table_name = 'auth_sessions' and privilege_type = 'SELECT')
+			    or (table_name = 'identity_repair_tasks' and privilege_type in ('SELECT', 'INSERT'))
+			    or (table_name = 'auth_sessions' and privilege_type in ('SELECT', 'INSERT')) or
+			    (table_name = 'login_enrollments' and privilege_type in ('SELECT', 'INSERT')) or
+			    (table_name = 'security_rate_limits' and privilege_type in ('SELECT', 'INSERT', 'UPDATE'))
 			  )
 		`, &unexpectedAPIGrants)
 		scanRowWithArguments(t, adminPool, ctx, `
@@ -265,7 +268,7 @@ func TestPostgresFoundation(t *testing.T) {
 	t.Run("returns the exact ready response without connection details", func(t *testing.T) {
 		var logOutput bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
-		handler := httpserver.New(pool, logger, 2*time.Second, nil, nil, nil, nil)
+		handler := httpserver.New(pool, logger, 2*time.Second, nil, nil, nil, nil, nil)
 		response := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 

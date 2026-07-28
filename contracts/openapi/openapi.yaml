@@ -246,26 +246,26 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/athlete/login:
+  /v1/auth/login:
     post:
-      operationId: loginAthlete
+      operationId: login
       tags:
         - Autenticacao
-      summary: Autenticar atleta por matricula
+      summary: Autenticar por matrícula e senha
       description: >-
-        Autentica com matricula e senha sem expor identidade tecnica em campo de
-        negocio. A sessao criada pelo Auth fica server-side ate a checagem da
-        membership e e revogada se houver negacao. A mesma resposta generica
-        cobre matricula inexistente, senha incorreta, conta suspensa, convite
-        invalido e vinculo encerrado.
-      x-sysap-implementation-status: planned
+        Autentica athlete, trainer ou owner com matrícula e senha. A API é a
+        única intermediária com o Supabase Auth; antes de emitir tokens ela
+        confirma perfil, organização e membership no estado autoritativo local.
+        Matrícula inexistente, senha inválida, suspensão, ativação pendente e
+        bloqueio temporário retornam exatamente a mesma resposta 401.
+      x-sysap-implementation-status: implemented
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AthleteLoginRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: Credenciais aceitas e sessao emitida.
@@ -277,60 +277,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/staff/login:
-    post:
-      operationId: loginStaff
-      tags:
-        - Autenticacao
-      summary: Validar primeiro fator de staff
-      description: >-
-        Valida email e senha de owner ou trainer e devolve somente um ticket
-        opaco CSPRNG, vinculado ao sujeito, sessao e finalidade, de uso unico e
-        com validade de cinco minutos. A resposta indica verificacao de fator
-        existente ou enrollment obrigatorio. A sessao AAL1 fica sob custodia
-        server-side; nenhuma sessao utilizavel de staff e emitida antes do
-        segundo fator.
-      x-sysap-implementation-status: planned
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StaffLoginRequest"
-      responses:
-        "200":
-          description: Primeiro fator aceito; verificacao ou enrollment TOTP necessario.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-            X-Request-ID:
-              $ref: "#/components/headers/RequestID"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MFAChallengeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/staff/mfa/enroll:
     post:
       operationId: enrollStaffMFA
@@ -858,8 +807,8 @@ components:
               summary: Autenticacao nao concluida
               value:
                 error:
-                  code: authentication_failed
-                  message: authentication failed
+                  code: invalid_credentials
+                  message: invalid credentials
                   request_id: 0123456789abcdef0123456789abcdef
     AuthenticationRequired:
       description: >-
@@ -1201,14 +1150,6 @@ components:
       pattern: "^[0-9]{6}$"
       writeOnly: true
       description: Codigo TOTP numerico de seis digitos, tratado como segredo.
-    StaffEmailInput:
-      type: string
-      format: email
-      minLength: 3
-      maxLength: 254
-      writeOnly: true
-      description: Email de login de owner ou trainer previamente provisionado.
-      example: treinador@example.invalid
     RefreshTokenInput:
       type: string
       minLength: 1
@@ -1383,7 +1324,7 @@ components:
         organization_id:
           type: string
           format: uuid
-    AthleteLoginRequest:
+    LoginRequest:
       type: object
       additionalProperties: false
       required:
@@ -1394,38 +1335,37 @@ components:
           $ref: "#/components/schemas/EnrollmentNumber"
         password:
           $ref: "#/components/schemas/PasswordInput"
-    StaffLoginRequest:
+    LoginResponse:
       type: object
       additionalProperties: false
       required:
-        - email
-        - password
+        - session_id
+        - profile_id
+        - organization_id
+        - role
+        - aal
+        - access_token
+        - refresh_token
+        - expires_in
       properties:
-        email:
-          $ref: "#/components/schemas/StaffEmailInput"
-        password:
-          $ref: "#/components/schemas/PasswordInput"
-    MFAChallengeResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - authentication_state
-        - challenge_ticket
-        - expires_at
-      properties:
-        authentication_state:
+        session_id:
+          $ref: "#/components/schemas/UUID"
+        profile_id:
+          $ref: "#/components/schemas/UUID"
+        organization_id:
+          $ref: "#/components/schemas/UUID"
+        role:
+          $ref: "#/components/schemas/MembershipRole"
+        aal:
           type: string
-          enum:
-            - mfa_required
-            - mfa_enrollment_required
-          description: Proximo passo permitido pelo ticket de primeiro fator.
-        challenge_ticket:
-          $ref: "#/components/schemas/MFAChallengeTicketOutput"
-        expires_at:
-          type: string
-          format: date-time
-          readOnly: true
-          description: Instante UTC de expiracao do ticket.
+          const: aal1
+        access_token:
+          $ref: "#/components/schemas/AccessTokenOutput"
+        refresh_token:
+          $ref: "#/components/schemas/RefreshTokenOutput"
+        expires_in:
+          type: integer
+          minimum: 1
     StartStaffMFAEnrollmentRequest:
       type: object
       additionalProperties: false

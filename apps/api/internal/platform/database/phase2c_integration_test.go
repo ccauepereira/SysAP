@@ -101,7 +101,7 @@ func TestPhase2CSessionContext(t *testing.T) {
 				"select has_table_privilege('sysap_api', 'app.auth_sessions', $1)",
 				[]any{privilege}, &granted,
 			)
-			if granted != (privilege == "select") {
+			if granted != (privilege == "select" || privilege == "insert") {
 				t.Fatalf("sysap_api privilege %q on auth_sessions = %v", privilege, granted)
 			}
 		}

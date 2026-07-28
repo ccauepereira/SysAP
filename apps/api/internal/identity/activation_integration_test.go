@@ -105,6 +105,9 @@ func setupActivationIntegrationTest(t *testing.T) (*database.Pool, func(), strin
 	teardown := func() {
 		adminPool.Exec(ctx, "delete from app.activation_challenges")
 		adminPool.Exec(ctx, "delete from app.identity_repair_tasks")
+		adminPool.Exec(ctx, "delete from app.auth_sessions")
+		adminPool.Exec(ctx, "delete from app.security_audit_events")
+		adminPool.Exec(ctx, "delete from app.login_enrollments")
 		adminPool.Exec(ctx, "delete from app.activation_invitations")
 		adminPool.Exec(ctx, "delete from app.athlete_profiles")
 		adminPool.Exec(ctx, "delete from app.organization_memberships")

@@ -34,8 +34,9 @@ func New(
 	meHandler http.Handler,
 	invitationHandler http.Handler,
 	activationHandler http.Handler,
+	loginHandler http.Handler,
 ) http.Handler {
-	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, newRequestID)
+	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, newRequestID)
 }
 
 func newHandler(
@@ -46,6 +47,7 @@ func newHandler(
 	meHandler http.Handler,
 	invitationHandler http.Handler,
 	activationHandler http.Handler,
+	loginHandler http.Handler,
 	generateRequestID requestIDGenerator,
 ) http.Handler {
 	handler := &handler{
@@ -61,6 +63,9 @@ func newHandler(
 		mux.Handle("POST /v1/activation/start", activationHandler)
 		mux.Handle("POST /v1/activation/verify", activationHandler)
 		mux.Handle("POST /v1/activation/complete", activationHandler)
+	}
+	if loginHandler != nil {
+		mux.Handle("POST /v1/auth/login", loginHandler)
 	}
 
 	if authMiddleware != nil {

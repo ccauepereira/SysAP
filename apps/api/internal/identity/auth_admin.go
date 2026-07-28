@@ -29,6 +29,118 @@ type SupabaseAuthAdmin interface {
 	DeleteUser(ctx context.Context, id uuid.UUID) error
 }
 
+type supabasePasswordIdentityProvider struct {
+	auth *supabaseAuthAdmin
+}
+
+// NewSupabasePasswordIdentityProvider keeps password authentication behind the
+// API. Neither browser nor mobile code calls Supabase Auth directly.
+func NewSupabasePasswordIdentityProvider() PasswordIdentityProvider {
+	baseURL, roleKey := os.Getenv("SYSAP_SUPABASE_AUTH_URL"), os.Getenv("SYSAP_SUPABASE_SERVICE_ROLE_KEY")
+	auth, err := newSupabaseAuthAdmin(baseURL, roleKey, os.Getenv("SYSAP_ENV"), nil)
+	if err != nil {
+		return unavailablePasswordIdentityProvider{}
+	}
+	return &supabasePasswordIdentityProvider{auth: auth}
+}
+
+func (p *supabasePasswordIdentityProvider) Authenticate(ctx context.Context, expectedSubject uuid.UUID, password string) (ProviderSession, error) {
+	if p == nil || p.auth == nil || expectedSubject == uuid.Nil || password == "" {
+		return ProviderSession{}, errLoginDenied
+	}
+	var account struct {
+		ID    uuid.UUID `json:"id"`
+		Phone string    `json:"phone"`
+		Email string    `json:"email"`
+	}
+	if err := p.auth.getUser(ctx, expectedSubject, &account); err != nil || account.ID != expectedSubject {
+		return ProviderSession{}, errLoginDenied
+	}
+
+	payload := struct {
+		Phone    string `json:"phone,omitempty"`
+		Email    string `json:"email,omitempty"`
+		Password string `json:"password"`
+	}{Password: password}
+	if account.Phone != "" {
+		payload.Phone = account.Phone
+	} else if account.Email != "" {
+		payload.Email = account.Email
+	} else {
+		return ProviderSession{}, errLoginDenied
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+
+	endpoint := p.auth.baseURL.JoinPath("token")
+	query := endpoint.Query()
+	query.Set("grant_type", "password")
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	req.Header.Set("apikey", p.auth.roleKey)
+	req.Header.Set("Authorization", "Bearer "+p.auth.roleKey)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := p.auth.client.Do(req)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return ProviderSession{}, errLoginDenied
+	}
+	responseBody, err := readBounded(response.Body)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		User         struct {
+			ID uuid.UUID `json:"id"`
+		} `json:"user"`
+	}
+	if json.Unmarshal(responseBody, &result) != nil || result.User.ID != expectedSubject || result.RefreshToken == "" || result.ExpiresIn <= 0 {
+		return ProviderSession{}, errLoginDenied
+	}
+	sessionID, aal, err := parseProviderSession(result.AccessToken, expectedSubject)
+	if err != nil {
+		return ProviderSession{}, errLoginDenied
+	}
+	return ProviderSession{
+		SubjectID: expectedSubject, SessionID: sessionID, AAL: aal,
+		AccessToken: result.AccessToken, RefreshToken: result.RefreshToken, ExpiresIn: result.ExpiresIn,
+	}, nil
+}
+
+func (s *supabaseAuthAdmin) getUser(ctx context.Context, id uuid.UUID, target any) error {
+	endpoint := s.baseURL.JoinPath(authAdminEndpoint, id.String())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return errAuthUnavailable
+	}
+	req.Header.Set("apikey", s.roleKey)
+	req.Header.Set("Authorization", "Bearer "+s.roleKey)
+	response, err := s.client.Do(req)
+	if err != nil {
+		return errAuthUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return errAuthUnavailable
+	}
+	body, err := readBounded(response.Body)
+	if err != nil || json.Unmarshal(body, target) != nil {
+		return errAuthUnavailable
+	}
+	return nil
+}
+
 type unavailableAuthAdmin struct{}
 
 func (unavailableAuthAdmin) CreateUser(context.Context, string, string) (uuid.UUID, error) {

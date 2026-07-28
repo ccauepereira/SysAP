@@ -256,6 +256,13 @@ func (h *activationHandler) complete(w http.ResponseWriter, r *http.Request) {
 			return errors.New("membership_failed")
 		}
 
+		_, e = tx.Exec(r.Context(), `
+			insert into app.login_enrollments (enrollment_number, profile_id, organization_id)
+			values ($1, $2, $3)`, enrollment, profileID, orgID)
+		if e != nil {
+			return errors.New("login_enrollment_failed")
+		}
+
 		_, e = tx.Exec(r.Context(), `update app.athlete_profiles set status='activated', updated_at=$1 where id=$2`, now, profileID)
 		if e != nil {
 			return errors.New("athlete_failed")
