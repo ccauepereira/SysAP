@@ -151,6 +151,8 @@ func TestPostgresFoundation(t *testing.T) {
 			    (table_name = 'athletes' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'trainer_athlete_assignments' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'athlete_invitations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
+			    (table_name = 'activation_invitations' and privilege_type in ('SELECT', 'INSERT')) or
+			    (table_name = 'athlete_profiles' and privilege_type in ('SELECT', 'INSERT')) or
 			    (table_name = 'identity_operations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'outbox_events' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
 			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or

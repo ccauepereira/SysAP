@@ -144,7 +144,7 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var conflictErr error
 	var internalErr error
 
-	err = authorization.WithTenantContext(ctx, h.databasePool, dbIdentity, organizationID, func(tx pgx.Tx, membership authorization.Membership) error {
+	err = authorization.WithMembershipContext(ctx, h.databasePool, dbIdentity, organizationID, authenticated.ProfileID.String(), func(tx pgx.Tx, membership authorization.Membership) error {
 		if membership.Role != "owner" {
 			conflictErr = errors.New("forbidden")
 			return conflictErr
@@ -156,10 +156,10 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Check idempotency first
 		var existingFingerprint, resourceID string
-		err := tx.QueryRow(ctx, 
+		err := tx.QueryRow(ctx,
 			"SELECT request_fingerprint, resource_id FROM app.idempotency_records WHERE organization_id = $1 AND actor_profile_id = $2 AND operation = $3 AND idempotency_key = $4",
 			organizationID, membership.ProfileID, operation, idempotencyKey).Scan(&existingFingerprint, &resourceID)
-		
+
 		if err != nil && err != pgx.ErrNoRows {
 			internalErr = err
 			return err
@@ -184,13 +184,14 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				internalErr = err
 				return err
 			}
+			response.Status = "pending_activation"
 			return nil
 		}
 
 		// Try inserting new profile & invitation
 		var enrollmentNumber string
 		var profileID uuid.UUID
-		
+
 		// Attempt to insert profile with generated enrollment number
 		// We have to retry if enrollment number collides
 		for attempt := 0; attempt < 5; attempt++ {
@@ -202,11 +203,11 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			enrollmentNumber = enroll
 
 			err = tx.QueryRow(ctx, `
-				INSERT INTO app.athlete_profiles (enrollment_number, display_name, phone_e164, email, status)
-				VALUES ($1, $2, $3, $4, 'pending_activation')
+				INSERT INTO app.athlete_profiles (organization_id, enrollment_number, display_name, phone_e164, email, status)
+				VALUES ($1, $2, $3, $4, $5, 'pending_activation')
 				RETURNING id
-			`, enrollmentNumber, req.DisplayName, req.PhoneE164, req.Email).Scan(&profileID)
-			
+			`, organizationID, enrollmentNumber, req.DisplayName, req.PhoneE164, req.Email).Scan(&profileID)
+
 			if err != nil {
 				var pgErr *pgconn.PgError
 				if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "athlete_profiles_enrollment_number_key" {
@@ -222,7 +223,7 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
-		
+
 		if profileID == uuid.Nil {
 			internalErr = errors.New("failed to generate unique enrollment number")
 			return internalErr
@@ -230,13 +231,13 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var invitationID uuid.UUID
 		expiresAt := now.Add(7 * 24 * time.Hour) // 7 days valid
-		
+
 		err = tx.QueryRow(ctx, `
 			INSERT INTO app.activation_invitations (profile_id, organization_id, role, invited_by_profile_id, status, expires_at)
 			VALUES ($1, $2, 'athlete', $3, 'pending', $4)
 			RETURNING id
 		`, profileID, organizationID, membership.ProfileID, expiresAt).Scan(&invitationID)
-		
+
 		if err != nil {
 			internalErr = err
 			return err
@@ -247,7 +248,7 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO app.idempotency_records (organization_id, actor_profile_id, operation, idempotency_key, request_fingerprint, resource_type, resource_id, response_status, expires_at)
 			VALUES ($1, $2, $3, $4, $5, 'activation_invitation', $6, 201, $7)
 		`, organizationID, membership.ProfileID, operation, idempotencyKey, fingerprint, invitationID.String(), now.Add(24*time.Hour))
-		
+
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -260,10 +261,14 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Write audit event
 		_, err = tx.Exec(ctx, `
-			INSERT INTO app.security_audit_events (organization_id, actor_profile_id, target_profile_id, event_type, request_id, ip_address, user_agent)
-			VALUES ($1, $2, $3, 'athlete_provisioned', $4, '', '')
-		`, organizationID, membership.ProfileID, profileID, reqID)
-		
+			INSERT INTO app.security_audit_events (
+				organization_id, actor_profile_id, target_profile_id, event_type,
+				result, reason_code, resource_type, resource_id, request_id,
+				network_fingerprint, metadata
+			)
+			VALUES ($1, $2, NULL, 'athlete_provisioned', 'success', 'created', 'athlete_profile', $3, $4, '', '{}'::jsonb)
+		`, organizationID, membership.ProfileID, profileID.String(), reqID)
+
 		if err != nil {
 			internalErr = err
 			return err
@@ -307,8 +312,22 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	defer func() {
+		if internalErr != nil {
+			h.logger.Error("failed to create athlete invitation",
+				"organization_id", organizationID,
+				"request_id", reqID,
+				"operation", "create_invitation")
+		}
+	}()
+
 	if internalErr != nil || err != nil {
-		h.logger.Error("failed to create invitation", "error", err, "request_id", reqID)
+		if errors.Is(err, authorization.ErrUnauthorized) {
+			writeJSON(w, http.StatusForbidden, errorResponse{
+				Error: errorDetail{Code: "access_denied", Message: "access denied", RequestID: reqID},
+			})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
 			Error: errorDetail{Code: "internal_error", Message: "an internal error occurred", RequestID: reqID},
 		})

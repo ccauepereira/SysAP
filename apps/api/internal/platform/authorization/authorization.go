@@ -137,6 +137,45 @@ func WithTenantContext(
 	})
 }
 
+// WithMembershipContext validates active membership deterministicly by organization and profile ID before setting the organization context.
+func WithMembershipContext(
+	ctx context.Context,
+	pool *database.Pool,
+	identity database.AuthenticatedContext,
+	organizationID string,
+	profileID string,
+	action func(pgx.Tx, Membership) error,
+) error {
+	baseIdentity := identity
+	baseIdentity.OrganizationID.Valid = false
+
+	return pool.WithAuthenticatedContext(ctx, baseIdentity, func(tx pgx.Tx) error {
+		var membership Membership
+		membership.OrganizationID = organizationID
+
+		err := tx.QueryRow(ctx, `
+			select id, role, status, profile_id
+			from app.organization_memberships
+			where organization_id = $1
+			  and profile_id = $2
+			  and status = 'active'
+		`, organizationID, profileID).Scan(&membership.ID, &membership.Role, &membership.Status, &membership.ProfileID)
+
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrUnauthorized
+			}
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, "select set_config('app.current_organization_id', $1, true)", organizationID); err != nil {
+			return err
+		}
+
+		return action(tx, membership)
+	})
+}
+
 // CanAccessAthlete checks if the current membership role allows accessing a specific athlete.
 func CanAccessAthlete(ctx context.Context, tx pgx.Tx, membership Membership, athleteID string) error {
 	switch membership.Role {
