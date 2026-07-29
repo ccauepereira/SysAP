@@ -222,6 +222,10 @@ paths:
       operationId: verifyActivationSMS
       tags: [Convites de atleta]
       summary: Confirmar o OTP enviado por SMS
+      description: >-
+        Valida o OTP enviado por SMS para a matrícula informada. Em caso de
+        sucesso, emite uma proof opaca de uso único e autoriza exclusivamente o
+        avanço seguro para a etapa de confirmação por e-mail.
       security: []
       requestBody:
         required: true
@@ -248,6 +252,10 @@ paths:
       operationId: startActivationEmail
       tags: [Convites de atleta]
       summary: Iniciar confirmação por e-mail após o SMS
+      description: >-
+        Inicia o desafio OTP por e-mail somente depois de confirmar uma proof
+        SMS válida. A resposta é neutra e não revela o contato ou o resultado
+        individual da entrega.
       security: []
       requestBody:
         required: true
@@ -265,6 +273,10 @@ paths:
       operationId: verifyActivationEmail
       tags: [Convites de atleta]
       summary: Confirmar o OTP enviado por e-mail
+      description: >-
+        Valida o OTP enviado por e-mail no desafio correto e, quando válido,
+        emite a proof final de ativação, opaca, curta e de uso único, para a
+        criação segura da senha.
       security: []
       requestBody:
         required: true
