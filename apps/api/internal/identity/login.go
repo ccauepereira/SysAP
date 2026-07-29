@@ -23,7 +23,7 @@ import (
 
 const (
 	loginBlockPeriod = 15 * time.Minute
-	loginMaxFailures = 5
+	loginMaxFailures = 3
 	loginMaxBody     = 4096
 )
 
@@ -231,13 +231,13 @@ func reserveLoginAttempt(ctx context.Context, tx pgx.Tx, fingerprint []byte, now
 		    failure_count = case
 		        when app.security_rate_limits.blocked_until is not null and app.security_rate_limits.blocked_until > excluded.updated_at then app.security_rate_limits.failure_count
 		        when app.security_rate_limits.window_started_at + interval '15 minutes' <= excluded.updated_at then 1
-		        when app.security_rate_limits.failure_count >= 5 then 5
+		        when app.security_rate_limits.failure_count >= 2 then 2
 		        else app.security_rate_limits.failure_count + 1
 		    end,
 		    blocked_until = case
 		        when app.security_rate_limits.blocked_until is not null and app.security_rate_limits.blocked_until > excluded.updated_at then app.security_rate_limits.blocked_until
 		        when app.security_rate_limits.window_started_at + interval '15 minutes' <= excluded.updated_at then null
-		        when app.security_rate_limits.failure_count >= 5 then excluded.updated_at + interval '15 minutes'
+		        when app.security_rate_limits.failure_count >= 2 then excluded.updated_at + interval '15 minutes'
 		        else null
 		    end,
 		    updated_at = excluded.updated_at

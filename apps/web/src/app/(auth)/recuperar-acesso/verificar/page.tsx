@@ -1,18 +1,17 @@
 import type { Metadata } from "next";
-import { AuthShell, PreviewNotice } from "@/features/auth/auth-shell";
-import { PreviewOTPForm } from "@/features/auth/preview-otp-form";
+import { AuthShell } from "@/features/auth/auth-shell";
+import { RecoveryOTPForm } from "@/features/auth/recovery-forms";
 
-export const metadata: Metadata = { title: "Código de recuperação" };
+export const metadata: Metadata = { title: "Confirmar acesso" };
 
 export default function RecoveryVerificationPage() {
   return (
     <AuthShell
-      description="Digite o código de seis dígitos do canal mascarado selecionado."
+      description="Digite o código de seis dígitos enviado por e-mail."
       progress={{ current: 2, total: 3 }}
-      title="Digite o código"
+      title="Confirme seu acesso"
     >
-      <PreviewNotice />
-      <PreviewOTPForm nextHref="/recuperar-acesso/nova-senha" recovery />
+      <RecoveryOTPForm />
     </AuthShell>
   );
 }

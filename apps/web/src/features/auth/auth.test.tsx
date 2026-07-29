@@ -52,7 +52,7 @@ describe("authentication routes", () => {
     [ActivationPage, "Ative sua conta"],
     [ActivationVerificationPage, "Confirme seu acesso"],
     [RecoveryPage, "Recupere seu acesso"],
-    [RecoveryVerificationPage, "Digite o código"],
+    [RecoveryVerificationPage, "Confirme seu acesso"],
     [IdentityVerificationPage, "Confirme sua identidade"],
   ])("renders one accessible heading for each flow", (Page, heading) => {
     const { unmount } = render(<Page />);
@@ -89,10 +89,8 @@ describe("authentication routes", () => {
     });
   });
 
-  it("renders only masked recovery choices", () => {
+  it("does not leak PII in the recovery page", () => {
     const { container } = render(<RecoveryPage />);
-    expect(screen.getByText(/Celular cadastrado •••• ••42/)).toBeVisible();
-    expect(screen.getByText(/E-mail cadastrado c•••@•••\.com/)).toBeVisible();
     expect(container.textContent).not.toMatch(/\b\d{8,}\b|[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
   });
 

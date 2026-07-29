@@ -18,6 +18,7 @@ export function LoginForm() {
   const enrollmentRef = useRef<HTMLInputElement>(null);
   const [errors, setErrors] = useState<LoginErrors>({});
   const [loading, setLoading] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState<{ count: number; enrollment: string }>({ count: 0, enrollment: "" });
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -56,7 +57,14 @@ export function LoginForm() {
       }
 
       if (response.status === 401) {
-        setErrors({ form: "Não foi possível entrar com os dados informados." });
+        const newCount = failedAttempts.enrollment === enrollment ? failedAttempts.count + 1 : 1;
+        setFailedAttempts({ count: newCount, enrollment });
+        
+        if (newCount === 2) {
+          setErrors({ form: "Não foi possível entrar com os dados informados. Por segurança, mais uma tentativa inválida bloqueará temporariamente este acesso." });
+        } else {
+          setErrors({ form: "Não foi possível entrar com os dados informados." });
+        }
       } else {
         setErrors({ form: "O acesso está temporariamente indisponível. Tente novamente." });
       }

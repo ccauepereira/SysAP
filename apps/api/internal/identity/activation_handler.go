@@ -42,6 +42,13 @@ func NewActivationHandler(db *database.Pool, pepper string, logger *slog.Logger)
 	}
 	return newActivationHandler(db, []byte(pepper), otp, NewSupabaseAuthAdmin(), logger, time.Now)
 }
+
+func NewActivationHandlerWithOTP(db *database.Pool, pepper string, otp OTPProvider, logger *slog.Logger) http.Handler {
+	if otp == nil {
+		otp = unavailableOTPProvider{}
+	}
+	return newActivationHandler(db, []byte(pepper), otp, NewSupabaseAuthAdmin(), logger, time.Now)
+}
 func (h *activationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if len(h.pepper) == 0 {
@@ -196,7 +203,7 @@ func (h *activationHandler) emailStart(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if err := startChannelOTP(r.Context(), h.otp, "email", email); err != nil && h.otp.IsExternal() {
+		if err := startChannelOTP(r.Context(), h.otp, "email", email, code); err != nil {
 			return errProviderUnavailable
 		}
 		_, _ = tx.Exec(r.Context(), `update app.activation_challenges set invalidated_at=$1 where invitation_id=$2 and channel='email' and invalidated_at is null and consumed_at is null`, now, invitationID)
@@ -224,8 +231,8 @@ func (h *activationHandler) start(w http.ResponseWriter, r *http.Request) {
 			now := h.now().UTC()
 			var p, i uuid.UUID
 			_, _ = tx.Exec(r.Context(), `set local sysap.activation_flow = 'true'`)
-			var phone string
-			e := tx.QueryRow(r.Context(), `select p.id, i.id, p.phone_e164 from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id where p.enrollment_number=$1 and p.status='pending_activation' and i.status='pending' and i.expires_at>$2 limit 1 for update of i`, q.Enrollment, now).Scan(&p, &i, &phone)
+			var email string
+			e := tx.QueryRow(r.Context(), `select p.id, i.id, p.email from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id where p.enrollment_number=$1 and p.status='pending_activation' and i.status='pending' and i.expires_at>$2 limit 1 for update of i`, q.Enrollment, now).Scan(&p, &i, &email)
 			if e != nil {
 				return nil
 			}
@@ -251,15 +258,10 @@ func (h *activationHandler) start(w http.ResponseWriter, r *http.Request) {
 				resendCount = 0
 				resendWindow = now
 			}
-			if h.otp.IsExternal() {
-				if err := validateE164(phone); err != nil {
-					return errInvalidActivationPhone
-				}
-				if err := startChannelOTP(r.Context(), h.otp, "sms", phone); err != nil {
-					return err
-				}
+			if err := startChannelOTP(r.Context(), h.otp, "email", email, code); err != nil {
+				return err
 			}
-			_, e = tx.Exec(r.Context(), `insert into app.activation_challenges(athlete_profile_id, invitation_id, channel, otp_hmac, expires_at, resend_count, resend_window_started_at) values($1,$2,'sms',$3,$4,$5,$6)`, p, i, h.mac(code), now.Add(10*time.Minute), resendCount, resendWindow)
+			_, e = tx.Exec(r.Context(), `insert into app.activation_challenges(athlete_profile_id, invitation_id, channel, otp_hmac, expires_at, resend_count, resend_window_started_at) values($1,$2,'email',$3,$4,$5,$6)`, p, i, h.mac(code), now.Add(10*time.Minute), resendCount, resendWindow)
 			return e
 		})
 		if err != nil {
@@ -289,28 +291,14 @@ func (h *activationHandler) verify(w http.ResponseWriter, r *http.Request) {
 	e := h.db.WithTransaction(r.Context(), func(tx pgx.Tx) error {
 		now := h.now().UTC()
 		var id uuid.UUID
-		var phone string
 		var mac []byte
-		_, _ = tx.Exec(r.Context(), `set local sysap.activation_flow = 'true'`)
-		e := tx.QueryRow(r.Context(), `select c.challenge_id,c.otp_hmac,p.phone_e164 from app.activation_challenges c join app.athlete_profiles p on p.id=c.athlete_profile_id where p.enrollment_number=$1 and c.channel='sms' and c.invalidated_at is null and c.consumed_at is null and c.expires_at>$2 and c.attempt_count<5 for update of c`, q.Enrollment, now).Scan(&id, &mac, &phone)
+		e := tx.QueryRow(r.Context(), `select c.challenge_id,c.otp_hmac from app.activation_challenges c join app.athlete_profiles p on p.id=c.athlete_profile_id where p.enrollment_number=$1 and c.channel='email' and c.invalidated_at is null and c.consumed_at is null and c.expires_at>$2 and c.attempt_count<5 for update of c`, q.Enrollment, now).Scan(&id, &mac)
 		if e != nil {
 			return errors.New("failed")
 		}
 
-		if h.otp.IsExternal() {
-			if err := validateE164(phone); err != nil {
-				return errInvalidActivationPhone
-			}
-			if err := h.otp.Verify(r.Context(), phone, q.Code); err != nil {
-				if err.Error() == "provider_error" {
-					return err
-				}
-				hmacFailed = true
-			}
-		} else {
-			if !hmac.Equal(mac, h.mac(q.Code)) {
-				hmacFailed = true
-			}
+		if !hmac.Equal(mac, h.mac(q.Code)) {
+			hmacFailed = true
 		}
 
 		if hmacFailed {

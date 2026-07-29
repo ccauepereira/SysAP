@@ -25,10 +25,16 @@ type mockOTPProvider struct {
 	code       string
 	err        error
 	isExternal bool
+	startHook  func(ctx context.Context, phone string) error
 }
 
-func (m *mockOTPProvider) IsExternal() bool                              { return m.isExternal }
-func (m *mockOTPProvider) Start(ctx context.Context, phone string) error { return m.err }
+func (m *mockOTPProvider) IsExternal() bool { return m.isExternal }
+func (m *mockOTPProvider) Start(ctx context.Context, phone, code string) error {
+	if m.startHook != nil {
+		return m.startHook(ctx, phone)
+	}
+	return m.err
+}
 func (m *mockOTPProvider) Verify(ctx context.Context, phone, code string) error {
 	if code != m.code {
 		return errors.New("invalid_code")

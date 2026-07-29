@@ -1,21 +1,17 @@
 import type { Metadata } from "next";
-import { AuthShell, PreviewNotice } from "@/features/auth/auth-shell";
-import { PreviewPasswordForm } from "@/features/auth/preview-password-form";
+import { AuthShell } from "@/features/auth/auth-shell";
+import { RecoveryPasswordForm } from "@/features/auth/recovery-forms";
 
-export const metadata: Metadata = { title: "Redefinir senha" };
+export const metadata: Metadata = { title: "Nova senha" };
 
-export default function RecoveryPasswordPage() {
+export default function RecoveryNewPasswordPage() {
   return (
     <AuthShell
-      description="Crie uma nova senha longa e exclusiva para a sua conta."
+      description="Crie uma nova senha de no mínimo 15 caracteres."
       progress={{ current: 3, total: 3 }}
-      title="Redefina sua senha"
+      title="Nova senha"
     >
-      <PreviewNotice />
-      <PreviewPasswordForm
-        nextHref="/recuperar-acesso/concluida"
-        submitLabel="Visualizar conclusão"
-      />
+      <RecoveryPasswordForm />
     </AuthShell>
   );
 }

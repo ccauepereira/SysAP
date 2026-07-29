@@ -134,7 +134,7 @@ paths:
                   locality: "Centro"
                   team_id: 50000000-0000-4000-8000-000000000001
                   football_position: midfielder
-                  enrollment_delivery_channel: sms
+                  enrollment_delivery_channel: email
       responses:
         "201":
           description: Convite criado
@@ -364,6 +364,8 @@ paths:
                 $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/mfa:
     get:
       operationId: getMFAStatus
@@ -562,6 +564,8 @@ paths:
                 $ref: "#/components/schemas/SessionResponse"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout:
     post:
       operationId: logoutSession
@@ -579,6 +583,8 @@ paths:
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout-all:
     post:
       operationId: logoutAllSessions
@@ -597,6 +603,8 @@ paths:
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/password-recovery/start:
     post:
       operationId: startPasswordRecovery
@@ -1128,13 +1136,6 @@ components:
         type: string
         const: Bearer
       example: Bearer
-    InvitationLocation:
-      description: Caminho relativo do convite criado.
-      required: true
-      schema:
-        type: string
-        pattern: "^/v1/athlete-invitations/[0-9a-f-]{36}$"
-      example: /v1/athlete-invitations/10000000-0000-4000-8000-000000000001
   schemas:
     RequestID:
       type: string
@@ -1286,17 +1287,6 @@ components:
       description: >-
         URI otpauth de enrollment que contem o segredo TOTP. E exibida somente
         ao proprio staff pelo BFF, nunca registrada, persistida ou reutilizada.
-    InvitationStatus:
-      type: string
-      enum:
-        - pending_provisioning
-        - provisioning_failed
-        - pending_activation
-        - activation_finalizing
-        - accepted
-        - cancelled
-        - expired
-      description: Estado persistido do convite, separado do acesso da membership.
     MembershipRole:
       type: string
       enum:
@@ -1326,23 +1316,18 @@ components:
         - enrollment_delivery_channel
       properties:
         full_name:
-          type: string
-          minLength: 2
-          maxLength: 120
+          $ref: "#/components/schemas/FullNameInput"
         display_name:
           type: string
           minLength: 1
           description: Nome de exibicao do atleta
         phone_e164:
-          type: string
-          pattern: '^\+[1-9]\d{1,14}$'
-          description: Telefone normalizado em formato E.164
+          $ref: "#/components/schemas/PhoneE164Input"
         email:
           type: string
           format: email
         birth_date:
-          type: string
-          format: date
+          $ref: "#/components/schemas/BirthDateInput"
         locality:
           type: string
           minLength: 2
@@ -1354,7 +1339,8 @@ components:
           enum: [goalkeeper, defender, midfielder, forward]
         enrollment_delivery_channel:
           type: string
-          enum: [sms, email]
+          enum: [email]
+          description: "Unico canal ativo nesta homologacao."
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
@@ -1379,7 +1365,7 @@ components:
           description: Data de expiração do convite.
         delivery_channel:
           type: string
-          enum: [sms, email]
+          enum: [email]
     ActivationStartRequest:
       type: object
       additionalProperties: false
@@ -1458,20 +1444,6 @@ components:
           type: string
           format: password
           description: Senha do atleta
-    ActivationCompleteResponse:
-      type: object
-      properties:
-        profile_id:
-          type: string
-          format: uuid
-        enrollment_number:
-          type: string
-        role:
-          type: string
-          example: athlete
-        organization_id:
-          type: string
-          format: uuid
     LoginRequest:
       type: object
       additionalProperties: false
