@@ -6,12 +6,14 @@ import "@fontsource/barlow-condensed/500.css";
 import "@fontsource/barlow-condensed/600.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { AppShell } from "@/components/app-shell/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SysAP — Visão geral",
-  description: "Fundação demonstrativa do painel Artur Performance",
+  title: {
+    default: "SysAP — Artur Performance",
+    template: "%s — SysAP",
+  },
+  description: "Experiência digital Artur Performance",
 };
 
 export const viewport: Viewport = {
@@ -25,9 +27,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="pt-BR">
-      <body>
-        <AppShell>{children}</AppShell>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

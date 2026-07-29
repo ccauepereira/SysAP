@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/app-shell/app-shell";
 import { Dashboard } from "@/features/dashboard/dashboard";
 import { getSystemStatus } from "@/lib/api/system-status";
 import {
@@ -14,10 +15,12 @@ export default async function HomePage() {
   const machineDate = formatDashboardMachineDate(now);
 
   return (
-    <Dashboard
-      formattedDate={formattedDate}
-      machineDate={machineDate}
-      systemStatus={systemStatus}
-    />
+    <AppShell>
+      <Dashboard
+        formattedDate={formattedDate}
+        machineDate={machineDate}
+        systemStatus={systemStatus}
+      />
+    </AppShell>
   );
 }
