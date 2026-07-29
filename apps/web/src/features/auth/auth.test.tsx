@@ -6,6 +6,7 @@ import RecoveryPage from "@/app/(auth)/recuperar-acesso/page";
 import RecoveryVerificationPage from "@/app/(auth)/recuperar-acesso/verificar/page";
 import IdentityVerificationPage from "@/app/(auth)/verificar-identidade/page";
 import LoginPage from "@/app/(auth)/login/page";
+import { getSession } from "@/lib/auth/session";
 import { AuthShell } from "./auth-shell";
 import { LoginForm } from "./login-form";
 import { OTPField } from "./otp-field";
@@ -16,28 +17,38 @@ import {
   type SystemStateKind,
 } from "./system-state";
 
-const push = vi.fn();
-const replace = vi.fn();
-const refresh = vi.fn();
+const { push, replace, refresh, redirect } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
+  redirect: vi.fn(),
+}));
 
 vi.mock("next/navigation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/navigation")>();
   return {
     ...actual,
+    redirect,
     useRouter: () => ({ push, refresh, replace }),
   };
 });
+
+vi.mock("@/lib/auth/session", () => ({
+  getSession: vi.fn(),
+}));
 
 beforeEach(() => {
   push.mockReset();
   replace.mockReset();
   refresh.mockReset();
+  redirect.mockReset();
   vi.restoreAllMocks();
+  vi.mocked(getSession).mockClear();
+  vi.mocked(getSession).mockResolvedValue({ status: "unauthenticated", reason: "no_session" });
 });
 
 describe("authentication routes", () => {
   it.each([
-    [LoginPage, "Bem-vindo de volta."],
     [ActivationPage, "Ative sua conta"],
     [ActivationVerificationPage, "Confirme seu acesso"],
     [RecoveryPage, "Recupere seu acesso"],
@@ -50,8 +61,23 @@ describe("authentication routes", () => {
     unmount();
   });
 
+  it("renders login when the server has no valid session", async () => {
+    render(await LoginPage());
+    expect(screen.getByRole("heading", { level: 1, name: "Bem-vindo de volta." })).toBeVisible();
+  });
+
+  it("redirects login to the dashboard for an authenticated session", async () => {
+    vi.mocked(getSession).mockResolvedValue({
+      status: "authenticated",
+      user: { id: "profile", name: "Example", role: "athlete", organizationId: "organization" },
+    });
+    await LoginPage();
+    expect(redirect).toHaveBeenCalledWith("/");
+  });
+
   it("links login to activation and recovery", () => {
-    render(<LoginPage />);
+    return LoginPage().then((page) => {
+      render(page);
     expect(screen.getByRole("link", { name: /Ativar minha conta/i })).toHaveAttribute(
       "href",
       "/ativar",
@@ -60,6 +86,7 @@ describe("authentication routes", () => {
       "href",
       "/recuperar-acesso",
     );
+    });
   });
 
   it("renders only masked recovery choices", () => {
@@ -67,6 +94,11 @@ describe("authentication routes", () => {
     expect(screen.getByText(/Celular cadastrado •••• ••42/)).toBeVisible();
     expect(screen.getByText(/E-mail cadastrado c•••@•••\.com/)).toBeVisible();
     expect(container.textContent).not.toMatch(/\b\d{8,}\b|[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
+  });
+
+  it("keeps public activation routes independent from session redirects", () => {
+    render(<ActivationPage />);
+    expect(getSession).not.toHaveBeenCalled();
   });
 });
 

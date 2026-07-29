@@ -11,6 +11,7 @@ interface ApiIdentityResponse {
   profile: {
     id: string;
     display_name: string;
+    status?: string;
   };
   memberships: Array<{
     organization_id: string;
@@ -39,6 +40,9 @@ export async function getSession(): Promise<SessionState> {
 
     if (response.ok) {
       const data = (await response.json()) as ApiIdentityResponse;
+      if (data.profile.status !== undefined && data.profile.status !== "active") {
+        return { status: "unauthenticated", reason: "revoked" };
+      }
       const activeMembership = data.memberships.find((m) => m.status === "active");
 
       if (!activeMembership) {
