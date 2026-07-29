@@ -2,7 +2,7 @@ package identity
 
 import "unicode"
 
-func isValidPassword(p string) bool {
+func IsValidPassword(p string) bool {
 	if len(p) < 15 {
 		return false
 	}

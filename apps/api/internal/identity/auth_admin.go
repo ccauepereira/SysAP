@@ -26,6 +26,7 @@ var errAuthUnavailable = errors.New("auth admin unavailable")
 
 type SupabaseAuthAdmin interface {
 	CreateUser(ctx context.Context, phone, password string) (uuid.UUID, error)
+	CreateUserWithEmail(ctx context.Context, email, phone, password string) (uuid.UUID, error)
 	DeleteUser(ctx context.Context, id uuid.UUID) error
 }
 
@@ -212,6 +213,9 @@ type unavailableAuthAdmin struct{}
 func (unavailableAuthAdmin) CreateUser(context.Context, string, string) (uuid.UUID, error) {
 	return uuid.Nil, errAuthUnavailable
 }
+func (unavailableAuthAdmin) CreateUserWithEmail(context.Context, string, string, string) (uuid.UUID, error) {
+	return uuid.Nil, errAuthUnavailable
+}
 func (unavailableAuthAdmin) DeleteUser(context.Context, uuid.UUID) error { return errAuthUnavailable }
 
 type supabaseAuthAdmin struct {
@@ -292,6 +296,26 @@ func (s *supabaseAuthAdmin) CreateUser(ctx context.Context, phone, password stri
 	return response.ID, nil
 }
 
+func (s *supabaseAuthAdmin) CreateUserWithEmail(ctx context.Context, email, phone, password string) (uuid.UUID, error) {
+	payload, err := json.Marshal(struct {
+		Email        string `json:"email"`
+		Phone        string `json:"phone"`
+		Password     string `json:"password"`
+		EmailConfirm bool   `json:"email_confirm"`
+		PhoneConfirm bool   `json:"phone_confirm"`
+	}{Email: email, Phone: phone, Password: password, EmailConfirm: true, PhoneConfirm: true})
+	if err != nil {
+		return uuid.Nil, errAuthUnavailable
+	}
+	var response struct {
+		ID uuid.UUID `json:"id"`
+	}
+	if err := s.doJSON(ctx, http.MethodPost, authAdminEndpoint, bytes.NewReader(payload), &response); err != nil || response.ID == uuid.Nil {
+		return uuid.Nil, errAuthUnavailable
+	}
+	return response.ID, nil
+}
+
 func (s *supabaseAuthAdmin) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	if id == uuid.Nil {
 		return errAuthUnavailable
@@ -324,7 +348,6 @@ func (s *supabaseAuthAdmin) doJSON(ctx context.Context, method, path string, bod
 		return errAuthUnavailable
 	}
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return errAuthUnavailable
 	}

@@ -50,6 +50,11 @@ func (m *mockAuthAdmin) CreateUser(ctx context.Context, phone, password string) 
 	defer m.mu.Unlock()
 	return m.createdID, m.err
 }
+func (m *mockAuthAdmin) CreateUserWithEmail(ctx context.Context, email, phone, password string) (uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createdID, m.err
+}
 func (m *mockAuthAdmin) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

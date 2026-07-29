@@ -347,7 +347,7 @@ func (h *activationHandler) complete(w http.ResponseWriter, r *http.Request) {
 		Proof    string `json:"activation_proof"`
 		Password string `json:"password"`
 	}
-	if json.NewDecoder(r.Body).Decode(&q) != nil || !isValidPassword(q.Password) {
+	if json.NewDecoder(r.Body).Decode(&q) != nil || !IsValidPassword(q.Password) {
 		h.validationFailed(w, r)
 		return
 	}

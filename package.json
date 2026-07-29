@@ -21,7 +21,8 @@
     "db:status": "bash scripts/supabase-local.sh status",
     "db:env": "bash scripts/supabase-local.sh env",
     "db:reset": "bash scripts/supabase-local.sh reset",
-    "db:lint": "bash scripts/supabase-local.sh lint"
+    "db:lint": "bash scripts/supabase-local.sh lint",
+    "bootstrap:owner": "node scripts/bootstrap-owner.mjs"
   },
   "devDependencies": {
     "@redocly/cli": "2.39.0",

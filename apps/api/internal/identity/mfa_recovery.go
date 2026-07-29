@@ -626,7 +626,7 @@ func (h *recoveryHandler) verify(w http.ResponseWriter, r *http.Request) {
 }
 func (h *recoveryHandler) complete(w http.ResponseWriter, r *http.Request) {
 	request, ok := decodeRecoveryRequest[recoveryCompleteRequest](w, r)
-	if !ok || request.Proof == "" || len(request.Proof) > 256 || !isValidPassword(request.Password) || h.database == nil || len(h.pepper) < 16 {
+	if !ok || request.Proof == "" || len(request.Proof) > 256 || !IsValidPassword(request.Password) || h.database == nil || len(h.pepper) < 16 {
 		writeRecoveryInvalid(w, r)
 		return
 	}
