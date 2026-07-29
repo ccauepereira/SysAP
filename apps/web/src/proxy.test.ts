@@ -10,7 +10,7 @@ function request(path: string, cookie?: string) {
 }
 
 describe("optimistic protected-route proxy", () => {
-  it.each(["/", "/atletas", "/treinos/hoje", "/alertas"]) (
+  it.each(["/", "/admin/atletas/novo", "/atleta", "/atletas", "/treinos/hoje", "/alertas"]) (
     "redirects %s without an access cookie",
     (path) => {
       const response = proxy(request(path));

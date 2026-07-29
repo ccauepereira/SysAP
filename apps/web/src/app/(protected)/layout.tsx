@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/auth/session";
 export default async function ProtectedLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
-  await requireSession();
+  const user = await requireSession();
+  if (user.role === "athlete") return <>{children}</>;
   return <AppShell>{children}</AppShell>;
 }

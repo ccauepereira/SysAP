@@ -470,6 +470,14 @@
   margin-top: 1.25rem;
 }
 
+.success {
+  background: #edf7ed;
+  border: 1px solid #97c59a;
+  border-radius: 0.55rem;
+  color: #205d2a;
+  padding: 0.7rem 0.85rem;
+}
+
 .secondary {
   align-items: center;
   background: transparent;

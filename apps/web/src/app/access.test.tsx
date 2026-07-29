@@ -26,7 +26,7 @@ describe("protected web entry point", () => {
     requireSessionMock.mockResolvedValueOnce({
       id: "profile",
       name: "Example",
-      role: "athlete",
+      role: "owner",
       organizationId: "organization",
     });
     getSystemStatusMock.mockResolvedValueOnce({

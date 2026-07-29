@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/app-shell/app-shell";
 import { Dashboard } from "@/features/dashboard/dashboard";
 import { requireSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 import { getSystemStatus } from "@/lib/api/system-status";
 import {
   formatDashboardDate,
@@ -10,7 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  await requireSession();
+  const user = await requireSession();
+  if (user.role === "athlete") redirect("/atleta");
   const systemStatus = await getSystemStatus();
   const now = new Date();
   const formattedDate = formatDashboardDate(now);

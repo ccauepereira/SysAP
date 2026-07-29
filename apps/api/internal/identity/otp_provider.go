@@ -13,6 +13,13 @@ type OTPProvider interface {
 	Verify(ctx context.Context, phone, code string) error
 }
 
+// ChannelOTPProvider is optional for adapters that distinguish SMS and email.
+// Legacy providers continue to work through the OTPProvider methods.
+type ChannelOTPProvider interface {
+	StartChannel(ctx context.Context, channel, destination string) error
+	VerifyChannel(ctx context.Context, channel, destination, code string) error
+}
+
 type localOTPProvider struct {
 	hook func() (string, error)
 }
@@ -48,4 +55,25 @@ func (p localOTPProvider) NewCode() (string, error) {
 		b[i] = '0' + b[i]%10
 	}
 	return string(b[:]), nil
+}
+
+func (p localOTPProvider) StartChannel(ctx context.Context, channel, destination string) error {
+	return p.Start(ctx, destination)
+}
+func (p localOTPProvider) VerifyChannel(ctx context.Context, channel, destination, code string) error {
+	return p.Verify(ctx, destination, code)
+}
+
+func startChannelOTP(ctx context.Context, provider OTPProvider, channel, destination string) error {
+	if p, ok := provider.(ChannelOTPProvider); ok {
+		return p.StartChannel(ctx, channel, destination)
+	}
+	return provider.Start(ctx, destination)
+}
+
+func verifyChannelOTP(ctx context.Context, provider OTPProvider, channel, destination, code string) error {
+	if p, ok := provider.(ChannelOTPProvider); ok {
+		return p.VerifyChannel(ctx, channel, destination, code)
+	}
+	return provider.Verify(ctx, destination, code)
 }

@@ -107,7 +107,7 @@ paths:
       description: >-
         Cria um convite na organizacao selecionada por organization_id.
         Requer token de Owner.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       parameters:
         - name: organization_id
           in: path
@@ -127,9 +127,14 @@ paths:
               fictionalAthlete:
                 summary: Atleta ficticio
                 value:
-                  display_name: "Atleta Exemplo"
+                  full_name: "Atleta Exemplo"
                   phone_e164: "+12025550123"
                   email: "atleta@example.com"
+                  birth_date: "2010-01-15"
+                  locality: "Centro"
+                  team_id: 50000000-0000-4000-8000-000000000001
+                  football_position: midfielder
+                  enrollment_delivery_channel: sms
       responses:
         "201":
           description: Convite criado
@@ -150,7 +155,9 @@ paths:
           $ref: "#/components/responses/AccessDenied"
         "409":
           $ref: "#/components/responses/ResourceConflict"
-        "500":
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/activation/start:
     post:
@@ -210,6 +217,75 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "503":
           $ref: "#/components/responses/IdentityVerificationUnavailable"
+  /v1/activation/verify-sms:
+    post:
+      operationId: verifyActivationSMS
+      tags: [Convites de atleta]
+      summary: Confirmar o OTP enviado por SMS
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationVerifyRequest"
+      responses:
+        "200":
+          description: Proof curta entregue somente ao BFF por HTTPS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/email/start:
+    post:
+      operationId: startActivationEmail
+      tags: [Convites de atleta]
+      summary: Iniciar confirmação por e-mail após o SMS
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationEmailStartRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/email/verify:
+    post:
+      operationId: verifyActivationEmail
+      tags: [Convites de atleta]
+      summary: Confirmar o OTP enviado por e-mail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationEmailVerifyRequest"
+      responses:
+        "200":
+          description: Proof final entregue somente ao BFF por HTTPS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/activation/complete:
     post:
       operationId: completeActivation
@@ -228,12 +304,8 @@ paths:
             schema:
               $ref: "#/components/schemas/ActivationCompleteRequest"
       responses:
-        "200":
+        "204":
           description: Ativação concluída com sucesso
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ActivationCompleteResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1232,9 +1304,19 @@ components:
       type: object
       additionalProperties: false
       required:
-        - display_name
+        - full_name
         - phone_e164
+        - email
+        - birth_date
+        - locality
+        - team_id
+        - football_position
+        - enrollment_delivery_channel
       properties:
+        full_name:
+          type: string
+          minLength: 2
+          maxLength: 120
         display_name:
           type: string
           minLength: 1
@@ -1246,23 +1328,35 @@ components:
         email:
           type: string
           format: email
-          description: Email opcional do atleta
+        birth_date:
+          type: string
+          format: date
+        locality:
+          type: string
+          minLength: 2
+          maxLength: 120
+        team_id:
+          $ref: "#/components/schemas/UUID"
+        football_position:
+          type: string
+          enum: [goalkeeper, defender, midfielder, forward]
+        enrollment_delivery_channel:
+          type: string
+          enum: [sms, email]
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
       required:
         - invitation_id
         - profile_id
-        - enrollment_number
         - status
         - expires_at
+        - delivery_channel
       properties:
         invitation_id:
           $ref: "#/components/schemas/UUID"
         profile_id:
           $ref: "#/components/schemas/UUID"
-        enrollment_number:
-          $ref: "#/components/schemas/EnrollmentNumber"
         status:
           type: string
           enum: [pending_activation]
@@ -1271,6 +1365,9 @@ components:
           type: string
           format: date-time
           description: Data de expiração do convite.
+        delivery_channel:
+          type: string
+          enum: [sms, email]
     ActivationStartRequest:
       type: object
       additionalProperties: false
@@ -1299,7 +1396,43 @@ components:
         activation_proof:
           type: string
           description: Prova de validação do OTP (hexadecimal, única, opaca)
-          example: 1a2b3c4d5e6f7g8h
+    ActivationProofResponse:
+      type: object
+      additionalProperties: false
+      required: [activation_proof]
+      properties:
+        activation_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
+          description: Proof opaca retornada somente ao BFF por HTTPS.
+    ActivationEmailStartRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_number, sms_proof]
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        sms_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
+    ActivationEmailVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_number, code, sms_proof]
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        code:
+          $ref: "#/components/schemas/OTPInput"
+        sms_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
     ActivationCompleteRequest:
       type: object
       required:
@@ -1309,7 +1442,6 @@ components:
         activation_proof:
           type: string
           description: Prova obtida no step de verify
-          example: 1a2b3c4d5e6f7g8h
         password:
           type: string
           format: password

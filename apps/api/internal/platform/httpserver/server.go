@@ -73,6 +73,9 @@ func newHandler(
 	if activationHandler != nil {
 		mux.Handle("POST /v1/activation/start", activationHandler)
 		mux.Handle("POST /v1/activation/verify", activationHandler)
+		mux.Handle("POST /v1/activation/verify-sms", activationHandler)
+		mux.Handle("POST /v1/activation/email/start", activationHandler)
+		mux.Handle("POST /v1/activation/email/verify", activationHandler)
 		mux.Handle("POST /v1/activation/complete", activationHandler)
 	}
 	if loginHandler != nil {

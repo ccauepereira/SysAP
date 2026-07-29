@@ -92,7 +92,7 @@ func setupActivationIntegrationTest(t *testing.T) (*database.Pool, func(), strin
 		{"insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values ($1, 'authenticated', 'authenticated', $2, '{}'::jsonb, '{}'::jsonb, now(), now())", []any{ownerAuthID, "owner-" + ownerAuthID.String() + "@example.test"}},
 		{"insert into app.profiles (id, auth_user_id, full_name) values ($1, $2, 'Owner')", []any{inviterProfileID, ownerAuthID}},
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'owner', 'active')", []any{uuid.New(), orgID, inviterProfileID}},
-		{"insert into app.athlete_profiles (id, organization_id, enrollment_number, display_name, phone_e164, status) values ($1, $2, $3, 'Test Athlete', '+15555550101', 'pending_activation')", []any{profileID, orgID, enrollment}},
+		{"insert into app.athlete_profiles (id, organization_id, enrollment_number, display_name, phone_e164, email, status) values ($1, $2, $3, 'Test Athlete', '+15555550101', 'athlete@example.test', 'pending_activation')", []any{profileID, orgID, enrollment}},
 		{"insert into app.activation_invitations (id, organization_id, profile_id, role, status, invited_by_profile_id, expires_at) values ($1, $2, $3, 'athlete', 'pending', $4, $5)", []any{invitationID, orgID, profileID, inviterProfileID, time.Now().Add(7 * 24 * time.Hour)}},
 	}
 
@@ -365,6 +365,50 @@ func TestActivationStartAndVerify(t *testing.T) {
 	})
 }
 
+func TestActivationRequiresSMSThenEmail(t *testing.T) {
+	pool, teardown, enrollment, _, _ := setupActivationIntegrationTest(t)
+	defer teardown()
+	now := time.Now().UTC()
+	handler := newActivationHandler(pool, []byte("dual-activation-pepper"), &mockOTPProvider{code: "654321"}, &mockAuthAdmin{}, slog.Default(), func() time.Time { return now })
+
+	startBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment})
+	start := httptest.NewRecorder()
+	handler.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/v1/activation/start", bytes.NewReader(startBody)))
+	if start.Code != http.StatusAccepted {
+		t.Fatalf("expected SMS start acceptance, got %d", start.Code)
+	}
+	verifySMSBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "code": "654321"})
+	verifySMS := httptest.NewRecorder()
+	handler.ServeHTTP(verifySMS, httptest.NewRequest(http.MethodPost, "/v1/activation/verify-sms", bytes.NewReader(verifySMSBody)))
+	if verifySMS.Code != http.StatusOK {
+		t.Fatalf("expected SMS verification, got %d", verifySMS.Code)
+	}
+	var smsResult map[string]string
+	_ = json.Unmarshal(verifySMS.Body.Bytes(), &smsResult)
+	smsProof := smsResult["activation_proof"]
+	if smsProof == "" {
+		t.Fatal("expected SMS proof")
+	}
+
+	emailStartBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "sms_proof": smsProof})
+	emailStart := httptest.NewRecorder()
+	handler.ServeHTTP(emailStart, httptest.NewRequest(http.MethodPost, "/v1/activation/email/start", bytes.NewReader(emailStartBody)))
+	if emailStart.Code != http.StatusAccepted {
+		t.Fatalf("expected email start acceptance, got %d", emailStart.Code)
+	}
+	emailVerifyBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "code": "654321", "sms_proof": smsProof})
+	emailVerify := httptest.NewRecorder()
+	handler.ServeHTTP(emailVerify, httptest.NewRequest(http.MethodPost, "/v1/activation/email/verify", bytes.NewReader(emailVerifyBody)))
+	if emailVerify.Code != http.StatusOK {
+		t.Fatalf("expected email verification, got %d", emailVerify.Code)
+	}
+	var finalResult map[string]string
+	_ = json.Unmarshal(emailVerify.Body.Bytes(), &finalResult)
+	if finalResult["activation_proof"] == "" {
+		t.Fatal("expected final activation proof")
+	}
+}
+
 func TestActivationComplete(t *testing.T) {
 	t.Run("invalid passwords", func(t *testing.T) {
 		pool, teardown, _, _, _ := setupActivationIntegrationTest(t)
@@ -435,8 +479,8 @@ func TestActivationComplete(t *testing.T) {
 
 		handler.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected 200 OK, got %d", rec.Code)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected 204 No Content, got %d", rec.Code)
 		}
 
 		// Verify proof cannot be reused
@@ -526,7 +570,7 @@ func TestActivationComplete(t *testing.T) {
 		<-ready
 		close(release)
 		first, second := <-results, <-results
-		if !((first == http.StatusOK && second == http.StatusUnauthorized) || (second == http.StatusOK && first == http.StatusUnauthorized)) {
+		if !((first == http.StatusNoContent && second == http.StatusUnauthorized) || (second == http.StatusNoContent && first == http.StatusUnauthorized)) {
 			t.Fatalf("concurrent completion statuses = %d, %d", first, second)
 		}
 		var memberships int

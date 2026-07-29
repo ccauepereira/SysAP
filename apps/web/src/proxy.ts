@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const accessCookieNames = ["sysap-access", "__Host-sysap-access"] as const;
-const protectedPathPattern = /^\/(?:atletas|treinos|alertas)(?:\/|$)/;
+const protectedPathPattern = /^\/(?:admin|atleta|atletas|treinos|alertas)(?:\/|$)/;
 
 export function proxy(request: NextRequest) {
   const isProtectedPath = request.nextUrl.pathname === "/" || protectedPathPattern.test(request.nextUrl.pathname);
@@ -21,7 +21,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/atletas/:path*", "/treinos/:path*", "/alertas/:path*"],
+  matcher: ["/", "/admin/:path*", "/atleta/:path*", "/atletas/:path*", "/treinos/:path*", "/alertas/:path*"],
 };
 
 export default proxy;

@@ -68,7 +68,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	meHandler := identity.NewMeHandler(databasePool, logger)
-	invitationHandler := identity.NewInvitationHandler(databasePool, logger, nil, nil)
+	invitationHandler := identity.NewInvitationHandlerWithDelivery(databasePool, logger, nil, nil, nil)
 	activationHandler := identity.NewActivationHandler(databasePool, os.Getenv("SYSAP_OTP_PEPPER"), logger)
 	loginHandler := identity.NewLoginHandler(databasePool, os.Getenv("SYSAP_LOGIN_RATE_LIMIT_SECRET"))
 	sessionHandler := identity.NewSessionLifecycleHandler(databasePool)

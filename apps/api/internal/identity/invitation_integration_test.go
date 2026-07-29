@@ -29,7 +29,7 @@ func (g *testEnrollmentGenerator) Generate() (string, error) {
 	return "2026" + "00000" + string(rune('0'+g.counter)), nil
 }
 
-func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 
 	dbURL := os.Getenv("SYSAP_TEST_DATABASE_URL")
@@ -56,6 +56,7 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 	membershipTrainer := uuid.New()
 	membershipAthlete := uuid.New()
 	ownerFactorID := uuid.New()
+	trainingGroupID := uuid.New()
 
 	queries := []struct {
 		query string
@@ -72,6 +73,7 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'trainer', 'active')", []any{membershipTrainer, orgID, profileTrainer}},
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'athlete', 'active')", []any{membershipAthlete, orgID, profileAthlete}},
 		{"insert into app.mfa_factors (profile_id, provider_factor_id, status, verified_at) values ($1, $2, 'verified', now())", []any{profileOwner, ownerFactorID}},
+		{"insert into app.training_groups (id, organization_id, name) values ($1, $2, 'Fictional Group')", []any{trainingGroupID, orgID}},
 	}
 
 	adminPool, err := pgxpool.New(ctx, dbURL)
@@ -86,11 +88,13 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 	}
 
 	teardown := func() {
+		adminPool.Exec(ctx, "delete from app.training_group_athletes")
 		adminPool.Exec(ctx, "delete from app.idempotency_records")
 		adminPool.Exec(ctx, "delete from app.security_audit_events")
 		adminPool.Exec(ctx, "delete from app.mfa_factors")
 		adminPool.Exec(ctx, "delete from app.activation_invitations")
 		adminPool.Exec(ctx, "delete from app.athlete_profiles")
+		adminPool.Exec(ctx, "delete from app.training_groups")
 		adminPool.Exec(ctx, "delete from app.organization_memberships")
 		adminPool.Exec(ctx, "delete from app.profiles")
 		adminPool.Exec(ctx, "delete from app.organizations")
@@ -99,11 +103,11 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 		pool.Close()
 	}
 
-	return pool, teardown, orgID, profileOwner, profileTrainer, profileAthlete, ownerAuthID, trainerAuthID, athleteAuthID
+	return pool, teardown, orgID, profileOwner, profileTrainer, profileAthlete, ownerAuthID, trainerAuthID, athleteAuthID, trainingGroupID
 }
 
 func TestCreateAthleteInvitation(t *testing.T) {
-	pool, teardown, orgID, profileOwner, profileTrainer, profileAthlete, ownerAuthID, trainerAuthID, athleteAuthID := setupInvitationIntegrationTest(t)
+	pool, teardown, orgID, profileOwner, profileTrainer, profileAthlete, ownerAuthID, trainerAuthID, athleteAuthID, trainingGroupID := setupInvitationIntegrationTest(t)
 	defer teardown()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -117,9 +121,14 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 	t.Run("owner can create invitation successfully", func(t *testing.T) {
 		reqBody := map[string]string{
-			"display_name": "New Athlete",
-			"phone_e164":   "+5511999999999",
-			"email":        "test@example.com",
+			"full_name":                   "New Athlete",
+			"phone_e164":                  "+5511999999999",
+			"email":                       "test@example.com",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "midfielder",
+			"enrollment_delivery_channel": "sms",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -160,8 +169,8 @@ func TestCreateAthleteInvitation(t *testing.T) {
 		if resp["status"] != "pending_activation" {
 			t.Errorf("expected status pending_activation, got %v", resp["status"])
 		}
-		if resp["enrollment_number"] == "" {
-			t.Errorf("expected enrollment_number, got empty")
+		if _, leaked := resp["enrollment_number"]; leaked {
+			t.Errorf("enrollment_number must not be returned")
 		}
 
 		// Verify idempotency works
@@ -194,8 +203,14 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 	t.Run("trainer cannot create invitation", func(t *testing.T) {
 		reqBody := map[string]string{
-			"display_name": "New Athlete 2",
-			"phone_e164":   "+5511999999998",
+			"full_name":                   "New Athlete 2",
+			"phone_e164":                  "+5511999999998",
+			"email":                       "two@example.test",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "defender",
+			"enrollment_delivery_channel": "sms",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -226,8 +241,14 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 	t.Run("missing idempotency key fails securely", func(t *testing.T) {
 		reqBody := map[string]string{
-			"display_name": "New Athlete 3",
-			"phone_e164":   "+5511999999997",
+			"full_name":                   "New Athlete 3",
+			"phone_e164":                  "+5511999999997",
+			"email":                       "three@example.test",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "forward",
+			"enrollment_delivery_channel": "email",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -257,8 +278,14 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 	t.Run("athlete cannot create invitation", func(t *testing.T) {
 		reqBody := map[string]string{
-			"display_name": "New Athlete 4",
-			"phone_e164":   "+5511999999996",
+			"full_name":                   "New Athlete 4",
+			"phone_e164":                  "+5511999999996",
+			"email":                       "four@example.test",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "goalkeeper",
+			"enrollment_delivery_channel": "sms",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -289,8 +316,14 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 	t.Run("cross organization fails", func(t *testing.T) {
 		reqBody := map[string]string{
-			"display_name": "New Athlete 5",
-			"phone_e164":   "+5511999999995",
+			"full_name":                   "New Athlete 5",
+			"phone_e164":                  "+5511999999995",
+			"email":                       "five@example.test",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "midfielder",
+			"enrollment_delivery_channel": "sms",
 		}
 		b, _ := json.Marshal(reqBody)
 

@@ -48,8 +48,9 @@ export function LoginForm() {
       });
 
       if (response.ok) {
+        const result = (await response.json()) as { role?: string };
         form.reset();
-        router.replace("/");
+        router.replace(result.role === "athlete" ? "/atleta" : "/");
         router.refresh();
         return;
       }

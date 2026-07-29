@@ -1,4 +1,4 @@
-# Experiência de autenticação — Web 2G.1
+# Experiência de autenticação — Web 2G.2
 
 ## Linguagem visual
 
@@ -17,8 +17,8 @@ segundos. Com `prefers-reduced-motion: reduce`, a abertura não é renderizada.
 ## Rotas
 
 - `/login`: matrícula e senha, conectado ao BFF same-origin da 2G.0.
-- `/ativar`, `/ativar/verificar`, `/ativar/senha`, `/ativar/concluida`:
-  apresentação controlada do fluxo de ativação.
+- `/ativar`, `/ativar/verificar`, `/ativar/email`, `/ativar/senha` e
+  `/ativar/concluida`: ativação por matrícula, OTP SMS, OTP e-mail e senha.
 - `/recuperar-acesso`, `/recuperar-acesso/verificar`,
   `/recuperar-acesso/nova-senha`, `/recuperar-acesso/concluida`: apresentação
   controlada da recuperação.
@@ -28,13 +28,21 @@ segundos. Com `prefers-reduced-motion: reduce`, a abertura não é renderizada.
   `/estado/conta-suspensa`, `/estado/servico-indisponivel` e
   `/estado/mfa-obrigatorio`: estados seguros reutilizáveis.
 
-## Limite de integração
+## Integração 2G.2
 
-Somente o login chama `/api/auth/login`. O BFF atual não expõe ativação,
-recuperação ou MFA ao browser; por isso essas páginas exibem um aviso de prévia,
-apagam o conteúdo dos formulários antes de navegar e não enviam nem persistem
-matrícula, senha, OTP ou prova. A conexão com os endpoints definitivos,
-autorização AAL2 e tratamento autoritativo dos estados pertence à 2G.2.
+O BFF recebe senha e OTP apenas para a chamada same-origin imediata. As proofs
+de SMS e de ativação final ficam exclusivamente em cookies HttpOnly, SameSite
+e Secure em HTTPS; nunca entram em URL, HTML, localStorage ou resposta ao
+browser. O browser não chama Supabase nem tabelas.
+
+A rota administrativa de cadastro é protegida por owner e mostra somente estado,
+expiração e canal. Matrícula, telefone, e-mail, OTP e proofs não são renderizados.
+A rota do atleta é exclusiva para athlete e identifica os dados iniciais como
+demonstrativos até que um treino exista.
+
+O envio real de matrícula, SMS e e-mail continua atrás de adaptadores server-side.
+Sem adaptador aprovado/configurado, a API falha fechada com 503; os testes usam
+fakes locais e não enviam mensagens.
 
 ## Acessibilidade e responsividade
 
