@@ -114,7 +114,7 @@ func TestPhase2CSessionContext(t *testing.T) {
 			{name: "session_id", want: false},
 			{name: "profile_id", want: false},
 			{name: "organization_id", want: false},
-			{name: "assurance_level", want: false},
+			{name: "assurance_level", want: true},
 			{name: "registered_at", want: false},
 		} {
 			var granted bool

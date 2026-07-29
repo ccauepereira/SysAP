@@ -55,6 +55,7 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 	membershipOwner := uuid.New()
 	membershipTrainer := uuid.New()
 	membershipAthlete := uuid.New()
+	ownerFactorID := uuid.New()
 
 	queries := []struct {
 		query string
@@ -70,6 +71,7 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'owner', 'active')", []any{membershipOwner, orgID, profileOwner}},
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'trainer', 'active')", []any{membershipTrainer, orgID, profileTrainer}},
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'athlete', 'active')", []any{membershipAthlete, orgID, profileAthlete}},
+		{"insert into app.mfa_factors (profile_id, provider_factor_id, status, verified_at) values ($1, $2, 'verified', now())", []any{profileOwner, ownerFactorID}},
 	}
 
 	adminPool, err := pgxpool.New(ctx, dbURL)
@@ -86,6 +88,7 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 	teardown := func() {
 		adminPool.Exec(ctx, "delete from app.idempotency_records")
 		adminPool.Exec(ctx, "delete from app.security_audit_events")
+		adminPool.Exec(ctx, "delete from app.mfa_factors")
 		adminPool.Exec(ctx, "delete from app.activation_invitations")
 		adminPool.Exec(ctx, "delete from app.athlete_profiles")
 		adminPool.Exec(ctx, "delete from app.organization_memberships")
@@ -133,6 +136,7 @@ func TestCreateAthleteInvitation(t *testing.T) {
 			SubjectID: ownerAuthID,
 			ProfileID: profileOwner,
 			SessionID: sessionID,
+			AAL:       auth.AAL2,
 		}
 		// Since we can't create the context, let's just make a stub resolver
 		stubResolver := &stubSessionResolver{context: authCtx}

@@ -149,6 +149,10 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conflictErr = errors.New("forbidden")
 			return conflictErr
 		}
+		if err := RequireAdministrativeAAL2(ctx, tx, authenticated, string(membership.Role)); err != nil {
+			conflictErr = err
+			return err
+		}
 
 		operation := "create_athlete_invitation"
 		fingerprint := fingerprintRequest(req)
@@ -286,6 +290,12 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if conflictErr != nil {
+		if errors.Is(conflictErr, errMFARequired) {
+			writeJSON(w, http.StatusForbidden, errorResponse{
+				Error: errorDetail{Code: "mfa_required", Message: "multi-factor authentication is required", RequestID: reqID},
+			})
+			return
+		}
 		if conflictErr.Error() == "forbidden" {
 			writeJSON(w, http.StatusForbidden, errorResponse{
 				Error: errorDetail{Code: "access_denied", Message: "access denied", RequestID: reqID},

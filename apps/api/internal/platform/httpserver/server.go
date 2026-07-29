@@ -36,8 +36,9 @@ func New(
 	activationHandler http.Handler,
 	loginHandler http.Handler,
 	sessionHandler http.Handler,
+	additionalHandlers ...http.Handler,
 ) http.Handler {
-	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler, newRequestID)
+	return newHandler(database, logger, databasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler, newRequestID, additionalHandlers...)
 }
 
 func newHandler(
@@ -51,6 +52,7 @@ func newHandler(
 	loginHandler http.Handler,
 	sessionHandler http.Handler,
 	generateRequestID requestIDGenerator,
+	additionalHandlers ...http.Handler,
 ) http.Handler {
 	handler := &handler{
 		database:            database,
@@ -61,6 +63,13 @@ func newHandler(
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.health)
 	mux.HandleFunc("GET /readyz", handler.readiness)
+	var mfaHandler, recoveryHandler http.Handler
+	if len(additionalHandlers) > 0 {
+		mfaHandler = additionalHandlers[0]
+	}
+	if len(additionalHandlers) > 1 {
+		recoveryHandler = additionalHandlers[1]
+	}
 	if activationHandler != nil {
 		mux.Handle("POST /v1/activation/start", activationHandler)
 		mux.Handle("POST /v1/activation/verify", activationHandler)
@@ -71,6 +80,11 @@ func newHandler(
 	}
 	if sessionHandler != nil {
 		mux.Handle("POST /v1/auth/refresh", sessionHandler)
+	}
+	if recoveryHandler != nil {
+		mux.Handle("POST /v1/auth/password-recovery/start", recoveryHandler)
+		mux.Handle("POST /v1/auth/password-recovery/verify", recoveryHandler)
+		mux.Handle("POST /v1/auth/password-recovery/complete", recoveryHandler)
 	}
 
 	if authMiddleware != nil {
@@ -84,6 +98,12 @@ func newHandler(
 			mux.Handle("POST /v1/auth/logout", authMiddleware(sessionHandler))
 			mux.Handle("POST /v1/auth/logout-all", authMiddleware(sessionHandler))
 		}
+		if mfaHandler != nil {
+			mux.Handle("GET /v1/auth/mfa", authMiddleware(mfaHandler))
+			mux.Handle("POST /v1/auth/mfa/enroll", authMiddleware(mfaHandler))
+			mux.Handle("POST /v1/auth/mfa/challenge", authMiddleware(mfaHandler))
+			mux.Handle("POST /v1/auth/mfa/verify", authMiddleware(mfaHandler))
+		}
 	} else {
 		notAuthFunc := func(w http.ResponseWriter, r *http.Request) {
 			WriteAuthenticationRequired(w, r.Context())
@@ -92,6 +112,10 @@ func newHandler(
 		mux.HandleFunc("POST /v1/organizations/{organization_id}/athlete-invitations", notAuthFunc)
 		mux.HandleFunc("POST /v1/auth/logout", notAuthFunc)
 		mux.HandleFunc("POST /v1/auth/logout-all", notAuthFunc)
+		mux.HandleFunc("GET /v1/auth/mfa", notAuthFunc)
+		mux.HandleFunc("POST /v1/auth/mfa/enroll", notAuthFunc)
+		mux.HandleFunc("POST /v1/auth/mfa/challenge", notAuthFunc)
+		mux.HandleFunc("POST /v1/auth/mfa/verify", notAuthFunc)
 	}
 
 	return withRequestContext(logRequests(mux, logger), generateRequestID)

@@ -57,6 +57,14 @@ func (r *postgresSessionResolver) Resolve(ctx context.Context, token VerifiedTok
 			  and auth_sessions.assurance_level = $2
 			  and auth_sessions.revoked_at is null
 			  and app.profiles.suspended_at is null
+			  and (
+				  auth_sessions.assurance_level <> 'aal2'
+				  or exists (
+					  select 1 from app.mfa_factors
+					  where app.mfa_factors.profile_id = auth_sessions.profile_id
+						and app.mfa_factors.status = 'verified'
+				  )
+			  )
 		`, token.SessionID, string(token.AAL)).Scan(&profileID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUnauthenticated

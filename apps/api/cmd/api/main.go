@@ -72,8 +72,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	activationHandler := identity.NewActivationHandler(databasePool, os.Getenv("SYSAP_OTP_PEPPER"), logger)
 	loginHandler := identity.NewLoginHandler(databasePool, os.Getenv("SYSAP_LOGIN_RATE_LIMIT_SECRET"))
 	sessionHandler := identity.NewSessionLifecycleHandler(databasePool)
+	mfaHandler := identity.NewMFAHandler(databasePool)
+	recoveryHandler := identity.NewPasswordRecoveryHandler(databasePool, os.Getenv("SYSAP_PASSWORD_RECOVERY_PEPPER"))
 
-	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler)
+	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler, mfaHandler, recoveryHandler)
 	server := httpserver.NewServer(configuration.HTTPAddress, handler)
 	serverErrors := make(chan error, 1)
 
