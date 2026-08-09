@@ -19,7 +19,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 try {
   await assertPortAvailable("127.0.0.1", 3000);
   const web = startWeb(processes, "dev");
-  await waitForWeb("Dados demonstrativos");
+  await waitForWeb("/login", 200);
   process.stdout.write(`Web SysAP: ${webURL}; pressione Ctrl+C para encerrar.\n`);
   const outcome = await Promise.race([
     stopRequested,

@@ -78,10 +78,10 @@ func (p *supabasePasswordIdentityProvider) Authenticate(ctx context.Context, exp
 		Email    string `json:"email,omitempty"`
 		Password string `json:"password"`
 	}{Password: password}
-	if account.Phone != "" {
-		payload.Phone = account.Phone
-	} else if account.Email != "" {
+	if account.Email != "" {
 		payload.Email = account.Email
+	} else if account.Phone != "" {
+		payload.Phone = account.Phone
 	} else {
 		return ProviderSession{}, errLoginDenied
 	}

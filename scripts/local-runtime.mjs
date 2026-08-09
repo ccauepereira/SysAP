@@ -9,6 +9,7 @@ import { runCommand, runCommandCapture } from "./run-command.mjs";
 import {
   canTerminateOwnedChild,
   parseDatabaseStatus,
+  parseSupabaseEnv,
   readLocalEnvironment,
   safeChildEnvironment,
   shouldStopDatabase,
@@ -109,6 +110,17 @@ export class LocalDatabaseSession {
     await runCommand("pnpm", ["db:stop"], { cwd: repositoryRoot, env: process.env });
     this.startCompleted = false;
   }
+}
+
+export async function readSupabaseEnvironment() {
+  const status = await runCommandCapture("pnpm", ["--silent", "exec", "supabase", "status", "--workdir", "infra", "-o", "env"], {
+    cwd: repositoryRoot,
+    env: process.env,
+  });
+  if (status.code !== 0) {
+    throw new Error(`Supabase local status capture failed`);
+  }
+  return parseSupabaseEnv(status.stdout);
 }
 
 async function localNetworkContainerIDs() {
@@ -213,16 +225,19 @@ export async function buildWeb() {
   });
 }
 
-export function startAPI(processes, binaryPath, databaseURL, environment = "development") {
+export function startAPI(processes, binaryPath, localEnvironment = {}) {
   return processes.start(binaryPath, [], {
     cwd: apiDirectory,
     label: "API",
     env: safeChildEnvironment({
-      SYSAP_ENV: environment,
+      SYSAP_ENV: "development",
       SYSAP_HTTP_ADDR: "127.0.0.1:8080",
-      SYSAP_DATABASE_URL: databaseURL,
       SYSAP_SHUTDOWN_TIMEOUT: "10s",
       SYSAP_DATABASE_PING_TIMEOUT: "2s",
+      SYSAP_LOGIN_RATE_LIMIT_SECRET: "local-dev-login-rate-limit-secret-pad",
+      SYSAP_OTP_PEPPER: "local-dev-otp-pepper-secret-pad-pad-pad",
+      SYSAP_PASSWORD_RECOVERY_PEPPER: "local-dev-password-recovery-pepper-pad",
+      ...localEnvironment,
     }),
   });
 }
@@ -255,18 +270,19 @@ export async function waitForAPI(pathname, expectedStatus, timeoutMilliseconds =
   }, timeoutMilliseconds);
 }
 
-export async function waitForWeb(expectedText, timeoutMilliseconds = 45_000) {
+export async function waitForWeb(pathname, expectedStatus, timeoutMilliseconds = 45_000) {
+  const endpoint = new URL(pathname, webURL);
   return waitFor(async () => {
-    const response = await fetch(webURL, {
+    const response = await fetch(endpoint, {
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(2_500),
     });
-    if (response.status !== 200 || response.redirected) {
-      return null;
+    if (response.status === expectedStatus) {
+      await readLimitedText(response, 2 * 1024 * 1024).catch(() => {});
+      return { response, text: "" };
     }
-    const text = await readLimitedText(response, 2 * 1024 * 1024);
-    return text.includes(expectedText) ? { response, text } : null;
+    return null;
   }, timeoutMilliseconds);
 }
 

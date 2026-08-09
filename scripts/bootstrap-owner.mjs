@@ -8,6 +8,7 @@ import {
   prepareRuntimeDirectory,
   repositoryRoot,
   runtimeDirectory,
+  readSupabaseEnvironment,
 } from "./local-runtime.mjs";
 import { readDatabasePort } from "./local-database-url.mjs";
 import { readLocalEnvironment, safeChildEnvironment, sanitizeMessage } from "./runtime-policy.mjs";
@@ -19,34 +20,7 @@ async function main() {
     const databasePort = readDatabasePort(path.join(repositoryRoot, "infra", "supabase", "config.toml"));
     const localEnv = readLocalEnvironment(path.join(repositoryRoot, ".env.local"), databasePort);
 
-    // 2. Fetch Supabase status for auth URL and service role key
-    const status = await runCommandCapture("pnpm", ["--silent", "exec", "supabase", "status", "--workdir", "infra", "-o", "env"], {
-      cwd: repositoryRoot,
-      env: process.env,
-    });
-
-    if (status.code !== 0) {
-      throw new Error(`Supabase local status capture failed: ${status.stderr}`);
-    }
-
-    let serviceRoleKey = "";
-    let apiURL = "";
-
-    const lines = status.stdout.split("\n");
-    for (const line of lines) {
-      const match = /^([A-Z_]+)="?([^"]*)"?$/.exec(line.trim());
-      if (match) {
-        if (match[1] === "SERVICE_ROLE_KEY") {
-          serviceRoleKey = match[2];
-        } else if (match[1] === "API_URL") {
-          apiURL = match[2];
-        }
-      }
-    }
-
-    if (!serviceRoleKey || !apiURL) {
-      throw new Error("Supabase local credentials (SERVICE_ROLE_KEY or API_URL) not found in status");
-    }
+    const supabaseEnv = await readSupabaseEnvironment();
 
     // 3. Compile the bootstrap-owner command
     await prepareRuntimeDirectory();
@@ -76,8 +50,8 @@ async function main() {
       env: safeChildEnvironment({
         SYSAP_ENV: "development",
         SYSAP_DATABASE_URL: localEnv.SYSAP_DATABASE_URL,
-        SYSAP_SUPABASE_AUTH_URL: `${apiURL}/auth/v1`,
-        SYSAP_SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+        SYSAP_SUPABASE_AUTH_URL: `${supabaseEnv.apiURL}/auth/v1`,
+        SYSAP_SUPABASE_SERVICE_ROLE_KEY: supabaseEnv.serviceRoleKey,
       }),
       stdio: "inherit"
     });

@@ -6,6 +6,7 @@ import {
   hasForbiddenEnvironmentName,
   parseDatabaseStatus,
   parseLocalEnvironment,
+  parseSupabaseEnv,
   sanitizeMessage,
   shouldStopDatabase,
   validateLoopbackHTTPURL,
@@ -22,31 +23,40 @@ function fixtureDatabaseURL() {
   return value.href;
 }
 
-test("parses only the two authorized local database variables", () => {
+test("parses SYSAP_ variables to an allowlisted environment", () => {
   const value = fixtureDatabaseURL();
+  const input = `
+SYSAP_ENV=development
+# Comment
+SYSAP_DATABASE_URL='${value}'
+SYSAP_TEST_DATABASE_URL='${value}'
+SYSAP_AUTH_JWT_ISSUER="test-issuer"
+`;
   assert.deepEqual(
-    parseLocalEnvironment(
-      `SYSAP_DATABASE_URL='${value}'\nSYSAP_TEST_DATABASE_URL='${value}'\n`,
-      databasePort,
-    ),
-    { SYSAP_DATABASE_URL: value, SYSAP_TEST_DATABASE_URL: value },
+    parseLocalEnvironment(input, databasePort),
+    {
+      SYSAP_ENV: "development",
+      SYSAP_DATABASE_URL: value,
+      SYSAP_TEST_DATABASE_URL: value,
+      SYSAP_AUTH_JWT_ISSUER: "test-issuer",
+    },
   );
 });
 
 test("rejects extra, duplicated, inconsistent, and remote environment values", () => {
   const value = fixtureDatabaseURL();
   assert.throws(() => parseLocalEnvironment(`SYSAP_DATABASE_URL='${value}'\n`, databasePort));
-  assert.throws(() =>
-    parseLocalEnvironment(
-      `SYSAP_DATABASE_URL='${value}'\nSYSAP_DATABASE_URL='${value}'\n`,
-      databasePort,
-    ),
-  );
   const other = new URL(value);
   other.hostname = "database.example.invalid";
   assert.throws(() =>
     parseLocalEnvironment(
       `SYSAP_DATABASE_URL='${other.href}'\nSYSAP_TEST_DATABASE_URL='${other.href}'\n`,
+      databasePort,
+    ),
+  );
+  assert.throws(() =>
+    parseLocalEnvironment(
+      `SYSAP_DATABASE_URL='${value}'\nSYSAP_TEST_DATABASE_URL='${value}'\nINVALID_VAR=123\n`,
       databasePort,
     ),
   );
@@ -99,4 +109,16 @@ test("sanitizes URLs with userinfo, token shapes, assignments and explicit value
   assert.equal(result.includes("fixture-token"), false);
   assert.equal(result.includes("eyJabcdefgh"), false);
   assert.equal(result.includes(explicit), false);
+});
+
+test("parseSupabaseEnv extracts API_URL and SERVICE_ROLE_KEY ignoring ANSI codes", () => {
+  const stdout = `\x1B[32mAPI_URL="http://127.0.0.1:54321"\x1B[0m\n\x1B[32mSERVICE_ROLE_KEY="test-key-123"\x1B[0m\nANOTHER_VAR="foo"\n`;
+  const env = parseSupabaseEnv(stdout);
+  assert.equal(env.apiURL, "http://127.0.0.1:54321");
+  assert.equal(env.serviceRoleKey, "test-key-123");
+});
+
+test("parseSupabaseEnv throws if credentials are missing", () => {
+  const stdout = `API_URL="http://127.0.0.1:54321"\n`;
+  assert.throws(() => parseSupabaseEnv(stdout));
 });

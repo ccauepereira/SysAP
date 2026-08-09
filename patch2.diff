@@ -1,0 +1,10 @@
+--- apps/api/internal/identity/login.go
++++ apps/api/internal/identity/login.go
+@@ -118,6 +118,7 @@
+ 		}
+ 
+ 		session, err := h.provider.Authenticate(r.Context(), identity.AuthUserID, request.Password)
++		fmt.Printf("Authenticate returned err=%v session=%+v\n", err, session)
+ 		if err != nil || session.SubjectID != identity.AuthUserID || session.SessionID == uuid.Nil || session.AAL != "aal1" || session.AccessToken == "" || session.RefreshToken == "" || session.ExpiresIn <= 0 {
+ 			if auditErr := writeLoginAudit(r.Context(), tx, identity, true, "failure", "invalid_credentials", fingerprint); auditErr != nil {
+ 				return auditErr
