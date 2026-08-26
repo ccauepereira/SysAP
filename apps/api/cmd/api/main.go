@@ -10,8 +10,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ccauepereira/SysAP/apps/api/internal/identity"
+	"github.com/ccauepereira/SysAP/apps/api/internal/platform/auth"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/config"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
+	"github.com/ccauepereira/SysAP/apps/api/internal/platform/email"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/httpserver"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/logging"
 )
@@ -35,6 +38,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
+	var databasePool *database.Pool
 	var databaseChecker httpserver.DatabaseChecker = database.Unavailable{}
 	if configuration.DatabaseURL == "" {
 		logger.Info("database is not configured; readiness will remain unavailable")
@@ -44,11 +48,55 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			logger.Warn("database configuration is invalid; readiness will remain unavailable")
 		} else {
 			databaseChecker = pool
+			databasePool = pool
 			defer pool.Close()
 		}
 	}
 
-	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout)
+	var authMiddleware func(http.Handler) http.Handler
+	if configuration.Auth.Configured() {
+		tokenVerifier, err := auth.NewTokenVerifier(configuration.Auth)
+		if err != nil {
+			return fmt.Errorf("configure token verifier: %w", err)
+		}
+		sessionResolver, err := auth.NewPostgresSessionResolver(databasePool)
+		if err != nil {
+			return fmt.Errorf("configure session resolver: %w", err)
+		}
+		authMiddleware = auth.Middleware(tokenVerifier, sessionResolver)
+	} else {
+		logger.Warn("authentication is not configured; protected routes will be inaccessible")
+	}
+
+	meHandler := identity.NewMeHandler(databasePool, logger)
+
+	var deliveryProvider identity.EnrollmentDeliveryProvider = nil
+	brevoAPIKey := os.Getenv("SYSAP_EMAIL_PROVIDER_BREVO_KEY")
+	brevoFrom := os.Getenv("SYSAP_EMAIL_PROVIDER_FROM")
+	if brevoAPIKey != "" && brevoFrom != "" {
+		brevoProvider, err := email.NewBrevoEmailProvider(brevoAPIKey, brevoFrom, "SysAP")
+		if err != nil {
+			logger.Error("failed to configure brevo email provider", "error", err)
+		} else {
+			deliveryProvider = identity.NewEmailEnrollmentDeliveryProvider(brevoProvider)
+		}
+	}
+
+	invitationHandler := identity.NewInvitationHandlerWithDelivery(databasePool, logger, nil, nil, deliveryProvider)
+
+	var otpProvider identity.OTPProvider = nil
+	if brevoAPIKey != "" && brevoFrom != "" {
+		brevoProvider, _ := email.NewBrevoEmailProvider(brevoAPIKey, brevoFrom, "SysAP")
+		otpProvider = identity.NewEmailOTPProvider(brevoProvider)
+	}
+
+	activationHandler := identity.NewActivationHandlerWithOTP(databasePool, os.Getenv("SYSAP_OTP_PEPPER"), otpProvider, logger)
+	loginHandler := identity.NewLoginHandler(databasePool, os.Getenv("SYSAP_LOGIN_RATE_LIMIT_SECRET"))
+	sessionHandler := identity.NewSessionLifecycleHandler(databasePool)
+	mfaHandler := identity.NewMFAHandler(databasePool)
+	recoveryHandler := identity.NewPasswordRecoveryHandler(databasePool, os.Getenv("SYSAP_PASSWORD_RECOVERY_PEPPER"))
+
+	handler := httpserver.New(databaseChecker, logger, configuration.DatabasePingTimeout, authMiddleware, meHandler, invitationHandler, activationHandler, loginHandler, sessionHandler, mfaHandler, recoveryHandler)
 	server := httpserver.NewServer(configuration.HTTPAddress, handler)
 	serverErrors := make(chan error, 1)
 

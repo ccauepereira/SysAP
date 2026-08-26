@@ -27,7 +27,8 @@ minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
 blockExoticSubdeps: true
 strictDepBuilds: true
-allowBuilds: {}
+allowBuilds:
+  unrs-resolver: false
 verifyDepsBeforeRun: error
 nodeVersion: 24.18.0
 engineStrict: true

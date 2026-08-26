@@ -98,20 +98,23 @@ paths:
                       code: service_not_ready
                       message: service is not ready
                       request_id: 0123456789abcdef0123456789abcdef
-  /v1/athlete-invitations:
+  /v1/organizations/{organization_id}/athlete-invitations:
     post:
       operationId: createAthleteInvitation
       tags:
         - Convites de atleta
       summary: Pre-cadastrar atleta e iniciar ativacao
       description: >-
-        Cria um convite na organizacao selecionada por X-Organization-ID. O
-        header e apenas contexto nao confiavel: a API exige membership ativa e
-        deriva papel/escopo do banco. Organizacao, papel, estado e identidade
-        tecnica nunca sao aceitos no corpo. Uma repeticao segura nao cria outra
-        identidade nem solicita outro SMS.
-      x-sysap-implementation-status: planned
+        Cria um convite na organizacao selecionada por organization_id.
+        Requer token de Owner.
+      x-sysap-implementation-status: implemented
       parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/OrganizationContext"
       requestBody:
@@ -122,79 +125,203 @@ paths:
               $ref: "#/components/schemas/CreateAthleteInvitationRequest"
             examples:
               fictionalAthlete:
-                summary: Atleta e telefone reservados para documentacao
+                summary: Atleta ficticio
                 value:
-                  full_name: Atleta Exemplo
+                  full_name: "Atleta Exemplo"
+                  phone_e164: "+12025550123"
+                  email: "atleta@example.com"
                   birth_date: "2010-01-15"
-                  phone: "+12025550123"
+                  locality: "Centro"
+                  team_id: 50000000-0000-4000-8000-000000000001
+                  football_position: midfielder
+                  enrollment_delivery_channel: email
       responses:
         "201":
-          description: Convite criado e fluxo de provisionamento iniciado.
+          description: Convite criado
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
-            Location:
-              $ref: "#/components/headers/InvitationLocation"
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AthleteInvitationResponse"
-              examples:
-                pendingProvisioning:
-                  summary: Convite ficticio aguardando provisionamento
-                  value:
-                    invitation_id: 10000000-0000-4000-8000-000000000001
-                    enrollment_number: "2026000001"
-                    status: pending_provisioning
-                    created_at: "2026-07-22T15:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/AccessDenied"
-        "404":
-          $ref: "#/components/responses/ResourceNotFound"
         "409":
           $ref: "#/components/responses/ResourceConflict"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/athlete/activate:
+  /v1/activation/start:
     post:
-      operationId: activateAthleteAccount
+      operationId: startActivation
       tags:
-        - Autenticacao
-      summary: Ativar conta de atleta
+        - Convites de atleta
+      summary: Iniciar ativação de atleta
       description: >-
-        Verifica matricula e OTP de uma identidade previamente provisionada e
-        registra a senha escolhida pelo atleta. A operacao nao cria usuarios e
-        nao inicia sessao; apos o sucesso, o atleta faz login explicitamente.
-        Falhas de matricula, OTP, convite ou estado usam a mesma resposta. A
-        idempotencia usa desafio/estado e projecao nao secreta; senha, OTP e
-        qualquer derivado nunca sao persistidos para comparar requests.
-      x-sysap-implementation-status: planned
+        Inicia o fluxo de ativação, gerando um OTP para a matrícula informada.
+        Sempre retorna 202 Accepted para não enumerar matrículas válidas.
+        Em desenvolvimento, o provedor é local; em produção, o envio é
+        configurado no Supabase Auth. A API não integra provedores SMS diretamente.
       security: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ActivateAthleteRequest"
+              $ref: "#/components/schemas/ActivationStartRequest"
+      responses:
+        "202":
+          description: Solicitação aceita
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        "503":
+          $ref: "#/components/responses/IdentityVerificationUnavailable"
+  /v1/activation/verify:
+    post:
+      operationId: verifyActivation
+      tags:
+        - Convites de atleta
+      summary: Verificar OTP
+      description: >-
+        Verifica se o OTP fornecido corresponde à matrícula e não expirou.
+        Retorna uma prova de ativação (activation_proof) que pode ser usada depois.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationVerifyRequest"
+      responses:
+        "200":
+          description: OTP validado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationVerifyResponse"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/IdentityVerificationUnavailable"
+  /v1/activation/verify-sms:
+    post:
+      operationId: verifyActivationSMS
+      tags: [Convites de atleta]
+      summary: Confirmar o OTP enviado por SMS
+      description: >-
+        Valida o OTP enviado por SMS para a matrícula informada. Em caso de
+        sucesso, emite uma proof opaca de uso único e autoriza exclusivamente o
+        avanço seguro para a etapa de confirmação por e-mail.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationVerifyRequest"
+      responses:
+        "200":
+          description: Proof curta entregue somente ao BFF por HTTPS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/email/start:
+    post:
+      operationId: startActivationEmail
+      tags: [Convites de atleta]
+      summary: Iniciar confirmação por e-mail após o SMS
+      description: >-
+        Inicia o desafio OTP por e-mail somente depois de confirmar uma proof
+        SMS válida. A resposta é neutra e não revela o contato ou o resultado
+        individual da entrega.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationEmailStartRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/email/verify:
+    post:
+      operationId: verifyActivationEmail
+      tags: [Convites de atleta]
+      summary: Confirmar o OTP enviado por e-mail
+      description: >-
+        Valida o OTP enviado por e-mail no desafio correto e, quando válido,
+        emite a proof final de ativação, opaca, curta e de uso único, para a
+        criação segura da senha.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationEmailVerifyRequest"
+      responses:
+        "200":
+          description: Proof final entregue somente ao BFF por HTTPS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/complete:
+    post:
+      operationId: completeActivation
+      tags:
+        - Convites de atleta
+      summary: Concluir ativação
+      description: >-
+        Conclui o fluxo de ativação, validando a activation_proof e definindo a senha do atleta.
+        Provisiona a identidade pelo adaptador server-side do Supabase Auth.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationCompleteRequest"
       responses:
         "204":
-          $ref: "#/components/responses/CommandCompleted"
+          description: Ativação concluída com sucesso
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InvalidCredentials"
+          $ref: "#/components/responses/AuthenticationRequired"
         "409":
           $ref: "#/components/responses/ResourceConflict"
         "422":
@@ -203,26 +330,26 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/athlete/login:
+  /v1/auth/login:
     post:
-      operationId: loginAthlete
+      operationId: login
       tags:
         - Autenticacao
-      summary: Autenticar atleta por matricula
+      summary: Autenticar por matrícula e senha
       description: >-
-        Autentica com matricula e senha sem expor identidade tecnica em campo de
-        negocio. A sessao criada pelo Auth fica server-side ate a checagem da
-        membership e e revogada se houver negacao. A mesma resposta generica
-        cobre matricula inexistente, senha incorreta, conta suspensa, convite
-        invalido e vinculo encerrado.
-      x-sysap-implementation-status: planned
+        Autentica athlete, trainer ou owner com matrícula e senha. A API é a
+        única intermediária com o Supabase Auth; antes de emitir tokens ela
+        confirma perfil, organização e membership no estado autoritativo local.
+        Matrícula inexistente, senha inválida, suspensão, ativação pendente e
+        bloqueio temporário retornam exatamente a mesma resposta 401.
+      x-sysap-implementation-status: implemented
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AthleteLoginRequest"
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: Credenciais aceitas e sessao emitida.
@@ -234,85 +361,42 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/staff/login:
-    post:
-      operationId: loginStaff
-      tags:
-        - Autenticacao
-      summary: Validar primeiro fator de staff
-      description: >-
-        Valida email e senha de owner ou trainer e devolve somente um ticket
-        opaco CSPRNG, vinculado ao sujeito, sessao e finalidade, de uso unico e
-        com validade de cinco minutos. A resposta indica verificacao de fator
-        existente ou enrollment obrigatorio. A sessao AAL1 fica sob custodia
-        server-side; nenhuma sessao utilizavel de staff e emitida antes do
-        segundo fator.
-      x-sysap-implementation-status: planned
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StaffLoginRequest"
+  /v1/auth/mfa:
+    get:
+      operationId: getMFAStatus
+      tags: [Autenticacao]
+      summary: Consultar o estado MFA do próprio usuário
+      description: Confere o fator do próprio usuário sem expor identificador, segredo ou QR code.
+      x-sysap-implementation-status: implemented
       responses:
         "200":
-          description: Primeiro fator aceito; verificacao ou enrollment TOTP necessario.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-            X-Request-ID:
-              $ref: "#/components/headers/RequestID"
+          description: Estado local reconciliado com o fator no Supabase Auth.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MFAChallengeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/MFAStatusResponse"
         "401":
-          $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+          $ref: "#/components/responses/AuthenticationRequired"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/staff/mfa/enroll:
+  /v1/auth/mfa/enroll:
     post:
-      operationId: enrollStaffMFA
+      operationId: enrollMFA
       tags:
         - Autenticacao
-      summary: Iniciar enrollment TOTP de staff
+      summary: Iniciar enrollment TOTP do próprio staff
       description: >-
-        Consome um ticket de primeiro fator limitado a enrollment, cria um fator
-        TOTP ainda nao verificado e seu challenge, e devolve URI de
-        provisionamento e novo ticket de verificacao ligado a ambos. A URI
-        contem segredo e nunca e registrada ou cacheada.
-        Nao ha replay idempotente dessa resposta; em resultado ambiguo, o staff
-        reinicia o login e fatores nao verificados sao reconciliados/removidos.
-        Nenhuma membership staff fica ativa antes da verificacao.
-      x-sysap-implementation-status: planned
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StartStaffMFAEnrollmentRequest"
+        Requer sessão autenticada AAL1 do próprio owner ou trainer. A URI contém
+        segredo TOTP e existe somente nesta resposta HTTPS com no-store.
+      x-sysap-implementation-status: implemented
       responses:
         "200":
-          description: Fator TOTP pendente de confirmacao pelo proprio staff.
+          description: Fator pendente e URI de provisionamento, sem persistência local do segredo.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -322,38 +406,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MFAEnrollmentResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/MFARequired"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/staff/mfa/verify:
+  /v1/auth/mfa/challenge:
     post:
-      operationId: verifyStaffMFA
-      tags:
-        - Autenticacao
-      summary: Concluir autenticacao TOTP de staff
-      description: >-
-        Consome uma unica vez o ticket opaco de fator existente ou de enrollment
-        e valida um codigo TOTP na janela aceita pelo Auth. Ticket
-        expirado/repetido, codigo incorreto, staff inexistente ou acesso
-        suspenso produzem a mesma falha generica.
-      x-sysap-implementation-status: planned
-      security: []
+      operationId: createMFAChallenge
+      tags: [Autenticacao]
+      summary: Criar challenge TOTP do próprio fator
+      description: Cria um challenge opaco no Supabase Auth para a verificação TOTP imediata.
+      x-sysap-implementation-status: implemented
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VerifyStaffMFARequest"
+              $ref: "#/components/schemas/MFAFactorRequest"
       responses:
         "200":
-          description: Segundo fator aceito e sessao de staff emitida.
+          description: Challenge opaco usado apenas para a verificação imediata.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -362,15 +436,36 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/MFAChallengeResponse"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/auth/mfa/verify:
+    post:
+      operationId: verifyMFAChallenge
+      tags: [Autenticacao]
+      summary: Verificar challenge TOTP e elevar a sessão a AAL2
+      description: Verifica o código TOTP pelo adaptador server-side e atualiza somente a sessão local corrente.
+      x-sysap-implementation-status: implemented
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFAVerifyRequest"
+      responses:
+        "200":
+          description: Sessão elevada; tokens existem somente nesta resposta HTTPS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/athlete-invitations/{invitation_id}/resend:
@@ -447,7 +542,7 @@ paths:
         nao persiste resposta idempotente contendo tokens. O token no corpo e
         uma credencial e nunca deve ser registrado. Falhas nao informam se a
         sessao expirou, foi revogada ou reutilizada.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       security: []
       requestBody:
         required: true
@@ -467,14 +562,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout:
@@ -488,14 +577,12 @@ paths:
         sign-out ao Auth. Toda rota protegida consulta essa revogacao porque o
         access JWT pode verificar ate exp. O Web remove cookies no BFF e o
         mobile remove material local mesmo se a resposta remota for ambigua.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       responses:
         "204":
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/logout-all:
@@ -510,28 +597,25 @@ paths:
         organizacao ou papel do cliente. O primeiro sucesso retorna 204; retry
         com o mesmo bearer ja revogado pode retornar 401, que o cliente trata
         como estado terminal e ainda assim remove seu material local.
-      x-sysap-implementation-status: planned
+      x-sysap-implementation-status: implemented
       responses:
         "204":
           $ref: "#/components/responses/CommandCompleted"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/recovery/request:
+  /v1/auth/password-recovery/start:
     post:
-      operationId: requestAthleteAccountRecovery
+      operationId: startPasswordRecovery
       tags:
         - Autenticacao
-      summary: Solicitar recuperacao de atleta
+      summary: Iniciar recuperação de senha sem enumeração
       description: >-
-        Aceita somente a matricula e responde de forma indistinguivel para
-        conta existente, inexistente, suspensa ou encerrada. O aceite nao
-        confirma envio nem revela o destino. Falhas individuais de entrega sao
-        tratadas fora da resposta publica.
-      x-sysap-implementation-status: planned
+        Retorna sempre 202 com corpo neutro para matrícula existente ou não.
+        O canal verificado é resolvido internamente pelo Supabase Auth e nunca
+        aparece na resposta, no log ou no banco SysAP.
+      x-sysap-implementation-status: implemented
       security: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -540,59 +624,66 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RequestAthleteRecoveryRequest"
-            examples:
-              fictionalEnrollment:
-                summary: Matricula ficticia
-                value:
-                  enrollment_number: "2026000001"
+              $ref: "#/components/schemas/PasswordRecoveryStartRequest"
       responses:
         "202":
           $ref: "#/components/responses/CommandAccepted"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/ResourceConflict"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /v1/auth/recovery/confirm:
+  /v1/auth/password-recovery/verify:
     post:
-      operationId: confirmAthleteAccountRecovery
+      operationId: verifyPasswordRecovery
       tags:
         - Autenticacao
-      summary: Confirmar recuperacao de atleta
+      summary: Verificar OTP de recuperação
       description: >-
-        Verifica matricula e OTP, substitui a senha e encerra sessoes anteriores.
-        Nao inicia nova sessao; o atleta autentica explicitamente depois. A
-        idempotencia nao persiste senha, OTP ou derivados. Falhas de identidade,
-        codigo ou estado compartilham a mesma resposta generica.
-      x-sysap-implementation-status: planned
+        O OTP é verificado somente pelo adaptador do Supabase Auth. O resultado
+        positivo emite uma proof aleatória de uso único, persistida apenas como HMAC.
+      x-sysap-implementation-status: implemented
       security: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ConfirmAthleteRecoveryRequest"
+              $ref: "#/components/schemas/PasswordRecoveryVerifyRequest"
+      responses:
+        "200":
+          description: Proof opaca para a conclusão imediata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordRecoveryProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/auth/password-recovery/complete:
+    post:
+      operationId: completePasswordRecovery
+      tags: [Autenticacao]
+      summary: Concluir recuperação e revogar sessões locais
+      description: >-
+        Exige proof de uso único e senha válida. Owner ou trainer com MFA ativo
+        recebem mfa_required: recuperação administrativa assistida é externa a esta subfase.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRecoveryCompleteRequest"
       responses:
         "204":
           $ref: "#/components/responses/CommandCompleted"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
-        "409":
-          $ref: "#/components/responses/ResourceConflict"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+        "403":
+          $ref: "#/components/responses/MFARequired"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/me:
@@ -731,8 +822,9 @@ components:
       in: header
       required: true
       description: >-
-        Organizacao selecionada pelo ator. E somente contexto nao confiavel; a
-        API exige membership ativa e permissao no estado autoritativo.
+        Seletor sujeito a autorizacao, obrigatorio somente para endpoints
+        tenant-bound futuros. Nao e exigido em /healthz, /readyz ou futuro
+        /v1/me. Um formato invalido ou malformado produz invalid_request.
       schema:
         type: string
         format: uuid
@@ -814,8 +906,26 @@ components:
               summary: Autenticacao nao concluida
               value:
                 error:
-                  code: authentication_failed
-                  message: authentication failed
+                  code: invalid_credentials
+                  message: invalid credentials
+                  request_id: 0123456789abcdef0123456789abcdef
+    MFARequired:
+      description: Owner ou trainer autenticado precisa elevar a sessão a AAL2.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            mfaRequired:
+              value:
+                error:
+                  code: mfa_required
+                  message: multi-factor authentication is required
                   request_id: 0123456789abcdef0123456789abcdef
     AuthenticationRequired:
       description: >-
@@ -1026,13 +1136,6 @@ components:
         type: string
         const: Bearer
       example: Bearer
-    InvitationLocation:
-      description: Caminho relativo do convite criado.
-      required: true
-      schema:
-        type: string
-        pattern: "^/v1/athlete-invitations/[0-9a-f-]{36}$"
-      example: /v1/athlete-invitations/10000000-0000-4000-8000-000000000001
   schemas:
     RequestID:
       type: string
@@ -1157,31 +1260,12 @@ components:
       pattern: "^[0-9]{6}$"
       writeOnly: true
       description: Codigo TOTP numerico de seis digitos, tratado como segredo.
-    StaffEmailInput:
-      type: string
-      format: email
-      minLength: 3
-      maxLength: 254
-      writeOnly: true
-      description: Email de login de owner ou trainer previamente provisionado.
-      example: treinador@example.invalid
     RefreshTokenInput:
       type: string
       minLength: 1
       maxLength: 16384
       writeOnly: true
       description: Refresh token opaco recebido somente para renovacao.
-    MFAChallengeTicketInput:
-      type: string
-      minLength: 43
-      maxLength: 128
-      pattern: "^[A-Za-z0-9_-]+$"
-      writeOnly: true
-      description: >-
-        Ticket bearer CSPRNG de uso unico, vinculado a sujeito, sessao e
-        finalidade, com validade de cinco minutos. Ticket de enrollment ainda
-        nao possui fator; ticket de verificacao tambem liga fator e challenge.
-        Nunca deve ser registrado.
     AccessTokenOutput:
       type: string
       minLength: 1
@@ -1194,16 +1278,6 @@ components:
       maxLength: 16384
       readOnly: true
       description: Refresh token rotacionavel retornado somente apos autenticacao.
-    MFAChallengeTicketOutput:
-      type: string
-      minLength: 43
-      maxLength: 128
-      pattern: "^[A-Za-z0-9_-]+$"
-      readOnly: true
-      description: >-
-        Ticket bearer CSPRNG de uso unico por cinco minutos. Sempre liga sujeito,
-        sessao e finalidade; fator/challenge sao ligados somente depois do
-        enrollment. Nunca deve ser registrado.
     TOTPProvisioningURIOutput:
       type: string
       format: uri
@@ -1213,17 +1287,6 @@ components:
       description: >-
         URI otpauth de enrollment que contem o segredo TOTP. E exibida somente
         ao proprio staff pelo BFF, nunca registrada, persistida ou reutilizada.
-    InvitationStatus:
-      type: string
-      enum:
-        - pending_provisioning
-        - provisioning_failed
-        - pending_activation
-        - activation_finalizing
-        - accepted
-        - cancelled
-        - expired
-      description: Estado persistido do convite, separado do acesso da membership.
     MembershipRole:
       type: string
       enum:
@@ -1244,130 +1307,235 @@ components:
       additionalProperties: false
       required:
         - full_name
+        - phone_e164
+        - email
         - birth_date
-        - phone
+        - locality
+        - team_id
+        - football_position
+        - enrollment_delivery_channel
       properties:
         full_name:
           $ref: "#/components/schemas/FullNameInput"
+        display_name:
+          type: string
+          minLength: 1
+          description: Nome de exibicao do atleta
+        phone_e164:
+          $ref: "#/components/schemas/PhoneE164Input"
+        email:
+          type: string
+          format: email
         birth_date:
           $ref: "#/components/schemas/BirthDateInput"
-        phone:
-          $ref: "#/components/schemas/PhoneE164Input"
+        locality:
+          type: string
+          minLength: 2
+          maxLength: 120
+        team_id:
+          $ref: "#/components/schemas/UUID"
+        football_position:
+          type: string
+          enum: [goalkeeper, defender, midfielder, forward]
+        enrollment_delivery_channel:
+          type: string
+          enum: [email]
+          description: "Unico canal ativo nesta homologacao."
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
       required:
         - invitation_id
-        - enrollment_number
+        - profile_id
         - status
-        - created_at
+        - expires_at
+        - delivery_channel
       properties:
         invitation_id:
           $ref: "#/components/schemas/UUID"
-        enrollment_number:
-          $ref: "#/components/schemas/EnrollmentNumber"
+        profile_id:
+          $ref: "#/components/schemas/UUID"
         status:
-          $ref: "#/components/schemas/InvitationStatus"
-        created_at:
           type: string
-          format: date-time
-          description: Instante UTC de criacao do convite.
-    ActivateAthleteRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - enrollment_number
-        - otp
-        - password
-      properties:
-        enrollment_number:
-          $ref: "#/components/schemas/EnrollmentNumber"
-        otp:
-          $ref: "#/components/schemas/OTPInput"
-        password:
-          $ref: "#/components/schemas/PasswordInput"
-    AthleteLoginRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - enrollment_number
-        - password
-      properties:
-        enrollment_number:
-          $ref: "#/components/schemas/EnrollmentNumber"
-        password:
-          $ref: "#/components/schemas/PasswordInput"
-    StaffLoginRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - email
-        - password
-      properties:
-        email:
-          $ref: "#/components/schemas/StaffEmailInput"
-        password:
-          $ref: "#/components/schemas/PasswordInput"
-    MFAChallengeResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - authentication_state
-        - challenge_ticket
-        - expires_at
-      properties:
-        authentication_state:
-          type: string
-          enum:
-            - mfa_required
-            - mfa_enrollment_required
-          description: Proximo passo permitido pelo ticket de primeiro fator.
-        challenge_ticket:
-          $ref: "#/components/schemas/MFAChallengeTicketOutput"
+          enum: [pending_activation]
+          description: O atleta deve ativar a conta com senha e OTP.
         expires_at:
           type: string
           format: date-time
-          readOnly: true
-          description: Instante UTC de expiracao do ticket.
-    StartStaffMFAEnrollmentRequest:
+          description: Data de expiração do convite.
+        delivery_channel:
+          type: string
+          enum: [email]
+    ActivationStartRequest:
       type: object
       additionalProperties: false
       required:
-        - challenge_ticket
+        - enrollment_number
       properties:
-        challenge_ticket:
-          $ref: "#/components/schemas/MFAChallengeTicketInput"
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+    ActivationVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - enrollment_number
+        - code
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        code:
+          $ref: "#/components/schemas/OTPInput"
+    ActivationVerifyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - activation_proof
+      properties:
+        activation_proof:
+          type: string
+          description: Prova de validação do OTP (hexadecimal, única, opaca)
+    ActivationProofResponse:
+      type: object
+      additionalProperties: false
+      required: [activation_proof]
+      properties:
+        activation_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
+          description: Proof opaca retornada somente ao BFF por HTTPS.
+    ActivationEmailStartRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_number, sms_proof]
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        sms_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
+    ActivationEmailVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_number, code, sms_proof]
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        code:
+          $ref: "#/components/schemas/OTPInput"
+        sms_proof:
+          type: string
+          minLength: 48
+          maxLength: 48
+          writeOnly: true
+    ActivationCompleteRequest:
+      type: object
+      required:
+        - activation_proof
+        - password
+      properties:
+        activation_proof:
+          type: string
+          description: Prova obtida no step de verify
+        password:
+          type: string
+          format: password
+          description: Senha do atleta
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - enrollment_number
+        - password
+      properties:
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
+        password:
+          $ref: "#/components/schemas/PasswordInput"
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - profile_id
+        - organization_id
+        - role
+        - aal
+        - access_token
+        - refresh_token
+        - expires_in
+      properties:
+        session_id:
+          $ref: "#/components/schemas/UUID"
+        profile_id:
+          $ref: "#/components/schemas/UUID"
+        organization_id:
+          $ref: "#/components/schemas/UUID"
+        role:
+          $ref: "#/components/schemas/MembershipRole"
+        aal:
+          type: string
+          const: aal1
+        access_token:
+          $ref: "#/components/schemas/AccessTokenOutput"
+        refresh_token:
+          $ref: "#/components/schemas/RefreshTokenOutput"
+        expires_in:
+          type: integer
+          minimum: 1
     MFAEnrollmentResponse:
       type: object
       additionalProperties: false
       required:
-        - authentication_state
-        - challenge_ticket
-        - totp_uri
-        - expires_at
+        - factor_id
+        - provisioning_uri
       properties:
-        authentication_state:
-          type: string
-          const: mfa_enrollment_pending
-        challenge_ticket:
-          $ref: "#/components/schemas/MFAChallengeTicketOutput"
-        totp_uri:
+        factor_id:
+          $ref: "#/components/schemas/UUID"
+        provisioning_uri:
           $ref: "#/components/schemas/TOTPProvisioningURIOutput"
-        expires_at:
-          type: string
-          format: date-time
-          readOnly: true
-          description: Instante UTC de expiracao do ticket e da exibicao segura.
-    VerifyStaffMFARequest:
+    MFAStatusResponse:
       type: object
       additionalProperties: false
       required:
-        - challenge_ticket
-        - totp
+        - mfa_enabled
       properties:
-        challenge_ticket:
-          $ref: "#/components/schemas/MFAChallengeTicketInput"
-        totp:
+        mfa_enabled:
+          type: boolean
+    MFAFactorRequest:
+      type: object
+      additionalProperties: false
+      required: [factor_id]
+      properties:
+        factor_id:
+          $ref: "#/components/schemas/UUID"
+    MFAChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [challenge_id]
+      properties:
+        challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+          readOnly: true
+          description: Challenge opaco retornado somente na resposta HTTPS com no-store.
+    MFAVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [factor_id, challenge_id, code]
+      properties:
+        factor_id:
+          $ref: "#/components/schemas/UUID"
+        challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+          writeOnly: true
+        code:
           $ref: "#/components/schemas/TOTPInput"
     SessionResponse:
       type: object
@@ -1400,7 +1568,7 @@ components:
       properties:
         refresh_token:
           $ref: "#/components/schemas/RefreshTokenInput"
-    RequestAthleteRecoveryRequest:
+    PasswordRecoveryStartRequest:
       type: object
       additionalProperties: false
       required:
@@ -1408,19 +1576,39 @@ components:
       properties:
         enrollment_number:
           $ref: "#/components/schemas/EnrollmentNumber"
-    ConfirmAthleteRecoveryRequest:
+    PasswordRecoveryVerifyRequest:
       type: object
       additionalProperties: false
       required:
         - enrollment_number
-        - otp
-        - new_password
+        - code
       properties:
         enrollment_number:
           $ref: "#/components/schemas/EnrollmentNumber"
-        otp:
+        code:
           $ref: "#/components/schemas/OTPInput"
-        new_password:
+    PasswordRecoveryProofResponse:
+      type: object
+      additionalProperties: false
+      required: [proof]
+      properties:
+        proof:
+          type: string
+          minLength: 43
+          maxLength: 256
+          readOnly: true
+          description: Proof opaca de uso único retornada somente com no-store.
+    PasswordRecoveryCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [proof, password]
+      properties:
+        proof:
+          type: string
+          minLength: 43
+          maxLength: 256
+          writeOnly: true
+        password:
           $ref: "#/components/schemas/PasswordInput"
     CommandAcceptedResponse:
       type: object

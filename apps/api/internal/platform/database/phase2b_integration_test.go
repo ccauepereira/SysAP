@@ -71,7 +71,7 @@ func TestPhase2BIdentity(t *testing.T) {
 
 		expectedGrants := map[string][]string{
 			"organizations":               {"SELECT", "UPDATE"},
-			"profiles":                    {"SELECT", "UPDATE"},
+			"profiles":                    {"SELECT", "INSERT", "UPDATE"},
 			"organization_memberships":    {"SELECT", "INSERT", "UPDATE"},
 			"athletes":                    {"SELECT", "INSERT", "UPDATE"},
 			"trainer_athlete_assignments": {"SELECT", "INSERT", "UPDATE"},
@@ -133,8 +133,8 @@ func TestPhase2BIdentity(t *testing.T) {
 		if err == nil {
 			t.Fatal("Expected error when inserting profile via sysap_api directly")
 		}
-		if !strings.Contains(err.Error(), "permission denied") {
-			t.Fatalf("Expected permission denied error, got %v", err)
+		if !strings.Contains(err.Error(), "permission denied") && !strings.Contains(err.Error(), "violates row-level security policy") {
+			t.Fatalf("Expected permission denied or RLS error, got %v", err)
 		}
 	})
 

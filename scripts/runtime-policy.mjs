@@ -14,29 +14,40 @@ export function parseLocalEnvironment(contents, expectedDatabasePort) {
     throw new Error("arquivo de ambiente local invalido");
   }
 
-  const lines = contents.endsWith("\n")
-    ? contents.slice(0, -1).split("\n")
-    : contents.split("\n");
-  if (lines.length !== 2) {
-    throw new Error("arquivo de ambiente local deve conter duas variaveis");
-  }
+  const lines = contents.split("\n");
+  const environment = {};
+  const sysapVarLine = /^SYSAP_[A-Z0-9_]+=(.*)$/;
 
-  const values = new Map();
   for (const line of lines) {
-    const match = environmentLine.exec(line);
-    if (match === null || values.has(match[1])) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) {
+      continue;
+    }
+    const match = sysapVarLine.exec(trimmed);
+    if (match !== null) {
+      const key = trimmed.slice(0, match[0].indexOf("="));
+      let value = match[1];
+      if (value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1);
+      } else if (value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1);
+      }
+      environment[key] = value;
+    } else {
       throw new Error("arquivo de ambiente local possui formato nao autorizado");
     }
-    values.set(match[1], validateLocalDatabaseURL(match[2], expectedDatabasePort));
   }
 
-  const databaseURL = values.get("SYSAP_DATABASE_URL");
-  const testDatabaseURL = values.get("SYSAP_TEST_DATABASE_URL");
+  const databaseURL = environment.SYSAP_DATABASE_URL;
+  const testDatabaseURL = environment.SYSAP_TEST_DATABASE_URL;
   if (databaseURL === undefined || testDatabaseURL === undefined || databaseURL !== testDatabaseURL) {
     throw new Error("arquivo de ambiente local possui valores inconsistentes");
   }
 
-  return { SYSAP_DATABASE_URL: databaseURL, SYSAP_TEST_DATABASE_URL: testDatabaseURL };
+  environment.SYSAP_DATABASE_URL = validateLocalDatabaseURL(databaseURL, expectedDatabasePort);
+  environment.SYSAP_TEST_DATABASE_URL = validateLocalDatabaseURL(testDatabaseURL, expectedDatabasePort);
+
+  return environment;
 }
 
 export function readLocalEnvironment(environmentPath, expectedDatabasePort) {
@@ -74,6 +85,30 @@ export function parseDatabaseStatus(stdout) {
     return false;
   }
   throw new Error("estado do banco local nao reconhecido");
+}
+
+export function parseSupabaseEnv(stdout) {
+  let serviceRoleKey = "";
+  let apiURL = "";
+
+  const lines = stdout.split("\n");
+  for (const line of lines) {
+    const cleanLine = line.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
+    const match = /^([A-Z_]+)="?([^"]*)"?$/.exec(cleanLine);
+    if (match) {
+      if (match[1] === "SERVICE_ROLE_KEY") {
+        serviceRoleKey = match[2];
+      } else if (match[1] === "API_URL") {
+        apiURL = match[2];
+      }
+    }
+  }
+
+  if (!serviceRoleKey || !apiURL) {
+    throw new Error("Credenciais do Supabase local (SERVICE_ROLE_KEY ou API_URL) nao encontradas");
+  }
+
+  return { apiURL, serviceRoleKey };
 }
 
 export function shouldStopDatabase(wasRunning, startCompleted) {

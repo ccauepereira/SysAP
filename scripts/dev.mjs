@@ -9,6 +9,7 @@ import {
   waitForAPI,
   waitForWeb,
   webURL,
+  readSupabaseEnvironment,
 } from "./local-runtime.mjs";
 import { sanitizeMessage } from "./runtime-policy.mjs";
 
@@ -31,12 +32,21 @@ async function main() {
   await assertPortAvailable("127.0.0.1", 8080);
   await assertPortAvailable("127.0.0.1", 3000);
   await database.start();
-  const environment = await database.environment();
+  const baseEnvironment = await database.environment();
+  const supabaseEnv = await readSupabaseEnvironment();
+  const environment = {
+    ...baseEnvironment,
+    SYSAP_SUPABASE_AUTH_URL: `${supabaseEnv.apiURL}/auth/v1`,
+    SYSAP_SUPABASE_SERVICE_ROLE_KEY: supabaseEnv.serviceRoleKey,
+    SYSAP_AUTH_JWT_ISSUER: `${supabaseEnv.apiURL}/auth/v1`,
+    SYSAP_AUTH_JWT_AUDIENCE: "authenticated",
+    SYSAP_AUTH_JWKS_URL: `${supabaseEnv.apiURL}/auth/v1/.well-known/jwks.json`,
+  };
   const binary = await buildAPI("sysap-api-dev");
-  const api = startAPI(processes, binary, environment.SYSAP_DATABASE_URL);
+  const api = startAPI(processes, binary, environment);
   const web = startWeb(processes, "dev");
   await waitForAPI("/healthz", 200);
-  await waitForWeb("Dados demonstrativos");
+  await waitForWeb("/login", 200);
 
   process.stdout.write(`SysAP local: API em ${apiURL}\n`);
   process.stdout.write(`SysAP local: Web em ${webURL}\n`);

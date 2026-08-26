@@ -81,7 +81,12 @@ provider não substitui os limites próprios da API.
   nome, telefone ou nascimento, nem reutilizada.
 - Um identificador Auth opaco, aleatório e não derivado de PII ou matrícula
   liga o registro privado ao `auth.users`. Ele não é exibido como ID de negócio,
-  campo de resposta ou parâmetro aceito pela API.
+  campo de resposta ou parâmetro aceito pela API. A criação deste usuário
+  (`auth.users`) é adiada para a Subfase 2E.
+- O atleta passa inicialmente por um perfil local com status `pending_activation`,
+  associado a uma matrícula CSPRNG e a um convite. Não há geração de token
+  de convite nem envio imediato de SMS na matrícula. A API confia em contatos
+  privados (telefone, email) e não verificados fornecidos diretamente pelo clube.
 - O access JWT do Supabase contém esse sujeito em `sub`. Web e mobile tratam o
   token inteiro como credencial opaca: não mostram, persistem em log nem usam
   `sub` para autorização. Ocultar o valor do portador do próprio JWT exigiria

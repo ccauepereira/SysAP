@@ -1,8 +1,8 @@
-# ADR 0003 — Contexto de identidade e sessão local da Subfase 2C.0
+# ADR 0003 — Contexto de identidade e sessão local da Fase 2C
 
 - **Status:** aprovado para implementação incremental
 - **Data:** 26 de julho de 2026
-- **Escopo:** contrato, schema, RLS e contexto transacional; sem autenticação HTTP
+- **Escopo:** contrato, schema, RLS, JWT/JWKS e middleware HTTP; sem endpoint de identidade
 
 ## Contexto
 
@@ -15,8 +15,8 @@ são estado de negócio do PostgreSQL, não claims aceitas do cliente.
 ## Decisão
 
 - Supabase Auth permanece responsável por senha, OTP, MFA, refresh e emissão
-  de JWT. A API Go validará futuramente esses JWTs e decidirá autorização a
-  partir do PostgreSQL do SysAP.
+  de JWT. A API Go valida JWTs e decide autorização a partir do PostgreSQL do
+  SysAP.
 - `app.auth_sessions` registra somente `session_id`, perfil, AAL, instante de
   registro e eventual revogação. Não contém bearer token, senha, OTP ou segredo
   TOTP. Isso permite negar localmente uma sessão ainda coberta por um JWT não
@@ -44,6 +44,18 @@ são estado de negócio do PostgreSQL, não claims aceitas do cliente.
   restritiva: só permite a leitura do próprio perfil. Projeções de perfil de
   terceiros exigirão policy específica de uma entrega futura, sem reintroduzir
   esse ciclo.
+- A API aceita apenas JWT ES256 com `kid`, assinatura conferida contra o JWKS
+  configurado no servidor, issuer, audience, expiração, `nbf` quando presente,
+  `sub` UUID e `session_id` UUID. `aal` ausente é normalizado para `aal1`; só
+  `aal1` e `aal2` são aceitos. Claims de papel ou organização não autorizam
+  domínio; `role`, quando presente, precisa ser `authenticated`.
+- O middleware extrai exclusivamente `Authorization: Bearer <token>`, valida o
+  JWT e resolve a sessão local dentro de `WithAuthenticatedContext`. Sessão
+  inexistente, revogada, associada a outro subject, AAL divergente ou perfil
+  com `suspended_at` resulta na mesma resposta segura de autenticação.
+- AAL é transportado no contexto imutável da requisição, mas não concede papel
+  nem acesso administrativo. Uma fase posterior aplicará AAL2 às ações que o
+  exigirem.
 
 ## Consequências
 
@@ -53,15 +65,10 @@ protegidas, necessária para suspensão e logout imediatos. A migration é
 forward-only: qualquer reversão operacional será uma migration compensatória
 após verificar dependências e dados existentes.
 
-## Limite desta subfase
+## Limite desta fase
 
-Esta 2C.0 não implementa login, Bearer middleware, JWT/JWKS, cookies, refresh,
-SMS, OTP, MFA, handler ou endpoint funcional de `/v1/me`, nem escrita real em
-sessões.
+Esta fase não implementa login, cookies, refresh, SMS, OTP, MFA, handler ou
+endpoint funcional de `/v1/me`, nem escrita real em sessões.
 
-As próximas entregas da 2C permanecem separadas: 2C.1 selecionará e provará o
-verificador JWT/JWKS; 2C.2 validará os claims técnicos permitidos, inclusive
-`sub`, `session_id` e AAL; 2C.3 integrará essa validação ao contexto
-transacional de rotas protegidas; 2C.4 implementará registro, logout, revogação
-e suspensão imediata; 2C.5 implementará `/v1/me` e a matriz de autorização
-correspondente. Cada uma exige revisão própria antes de alterar o fluxo.
+As próximas entregas permanecem separadas: 2C.4 implementará `/v1/me`, 2C.5
+implementará cache e rotação de JWKS e 2F aplicará AAL2 às ações sensíveis.

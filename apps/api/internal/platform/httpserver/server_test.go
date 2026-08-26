@@ -25,7 +25,7 @@ func (c *checkerStub) Ping(ctx context.Context) error {
 
 func TestHealthIsIndependentFromDatabase(t *testing.T) {
 	database := &checkerStub{err: errors.New("database unavailable")}
-	handler := newHandler(database, discardLogger(), time.Second, fixedRequestID)
+	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, nil, nil, nil, fixedRequestID)
 	response := performRequest(handler, http.MethodGet, "/healthz")
 
 	if response.Code != http.StatusOK {
@@ -44,7 +44,7 @@ func TestHealthIsIndependentFromDatabase(t *testing.T) {
 
 func TestReadinessReportsAvailableDatabase(t *testing.T) {
 	database := &checkerStub{}
-	handler := newHandler(database, discardLogger(), 250*time.Millisecond, fixedRequestID)
+	handler := newHandler(database, discardLogger(), 250*time.Millisecond, nil, nil, nil, nil, nil, nil, fixedRequestID)
 	startedAt := time.Now()
 	response := performRequest(handler, http.MethodGet, "/readyz")
 
@@ -77,7 +77,7 @@ func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
 	database := &checkerStub{err: errors.New(fixtureURL)}
 	var logOutput bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
-	handler := newHandler(database, logger, time.Second, fixedRequestID)
+	handler := newHandler(database, logger, time.Second, nil, nil, nil, nil, nil, nil, fixedRequestID)
 	response := performRequest(handler, http.MethodGet, "/readyz")
 
 	if response.Code != http.StatusServiceUnavailable {
@@ -105,7 +105,7 @@ func TestReadinessReturnsSafeErrorWhenDatabaseIsUnavailable(t *testing.T) {
 
 func TestReadinessRecoversWithoutRecreatingHandler(t *testing.T) {
 	database := &checkerStub{err: errors.New("database is starting")}
-	handler := newHandler(database, discardLogger(), time.Second, fixedRequestID)
+	handler := newHandler(database, discardLogger(), time.Second, nil, nil, nil, nil, nil, nil, fixedRequestID)
 
 	firstResponse := performRequest(handler, http.MethodGet, "/readyz")
 	if firstResponse.Code != http.StatusServiceUnavailable {
@@ -127,6 +127,17 @@ func TestNewServerConfiguresHTTPTimeouts(t *testing.T) {
 	}
 	if server.MaxHeaderBytes != maxHeaderBytes {
 		t.Fatalf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, maxHeaderBytes)
+	}
+}
+
+func TestRegistersActivationCompleteRoute(t *testing.T) {
+	activation := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := newHandler(&checkerStub{}, discardLogger(), time.Second, nil, nil, nil, activation, nil, nil, fixedRequestID)
+	response := performRequest(handler, http.MethodPost, "/v1/activation/complete")
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
 	}
 }
 

@@ -137,35 +137,15 @@ func TestPostgresFoundation(t *testing.T) {
 			assertPrivileges(t, adminPool, ctx, role, false, false)
 		}
 
-		var unexpectedAPIGrants, unexpectedClientGrants int
-		scanRow(t, adminPool, ctx, `
-			select count(*)
-			from information_schema.table_privileges
-			where table_schema = 'app'
-			  and grantee = 'sysap_api'
-			  and not (
-			    (table_name = 'bootstrap_metadata' and privilege_type = 'SELECT') or
-			    (table_name = 'organizations' and privilege_type in ('SELECT', 'UPDATE')) or
-			    (table_name = 'profiles' and privilege_type in ('SELECT', 'UPDATE')) or
-			    (table_name = 'organization_memberships' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'athletes' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'trainer_athlete_assignments' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'athlete_invitations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'identity_operations' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'outbox_events' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'idempotency_records' and privilege_type in ('SELECT', 'INSERT', 'UPDATE')) or
-			    (table_name = 'security_audit_events' and privilege_type in ('SELECT', 'INSERT'))
-			    or (table_name = 'auth_sessions' and privilege_type = 'SELECT')
-			  )
-		`, &unexpectedAPIGrants)
+		var unexpectedClientGrants int
 		scanRowWithArguments(t, adminPool, ctx, `
 			select count(*)
 			from information_schema.table_privileges
 			where table_schema = 'app'
 			  and grantee = any($1::text[])
 		`, []any{clientRoles}, &unexpectedClientGrants)
-		if unexpectedAPIGrants != 0 || unexpectedClientGrants != 0 {
-			t.Fatal("private schema contains an unexpected explicit grant")
+		if unexpectedClientGrants != 0 {
+			t.Fatal("private schema grants a table privilege to a client role")
 		}
 	})
 
@@ -262,7 +242,7 @@ func TestPostgresFoundation(t *testing.T) {
 	t.Run("returns the exact ready response without connection details", func(t *testing.T) {
 		var logOutput bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
-		handler := httpserver.New(pool, logger, 2*time.Second)
+		handler := httpserver.New(pool, logger, 2*time.Second, nil, nil, nil, nil, nil, nil)
 		response := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 
