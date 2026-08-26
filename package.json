@@ -13,6 +13,8 @@
     "test": "node scripts/test.mjs",
     "test:api": "node scripts/test-api.mjs",
     "test:web": "pnpm --filter @sysap/web test",
+    "mobile:typecheck": "pnpm --filter @sysap/mobile typecheck",
+    "mobile:test": "pnpm --filter @sysap/mobile test",
     "test:integration": "node scripts/integration.mjs",
     "security:dependencies": "node scripts/audit-dependencies.mjs",
     "security:secrets": "node scripts/scan-secrets.mjs",
