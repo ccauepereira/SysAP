@@ -196,8 +196,7 @@ func (h *activationHandler) emailStart(w http.ResponseWriter, r *http.Request) {
 		}
 		var profileID, invitationID uuid.UUID
 		var email string
-		if err := tx.QueryRow(r.Context(), `select p.id,i.id,p.email from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id join app.activation_proofs proof on proof.invitation_id=i.id where p.enrollment_number=$1 and proof.kind='sms' and proof.proof_hmac=$2 and proof.consumed_at is null and proof.expires_at>$3 and p.status='pending_activation' and i.status='pending' for update of i`, q.Enrollment, h.mac(q.SMSProof), now).Scan(&profileID, &invitationID, &email); err != nil {
-			return nil
+		if err := tx.QueryRow(r.Context(), `select p.id,i.id,p.email from app.athlete_profiles p join app.activation_invitations i on i.profile_id=p.id join app.activation_proofs proof on proof.invitation_id=i.id where p.enrollment_number=$1 and proof.kind='sms' and proof.proof_hmac=$2 and proof.consumed_at is null and proof.expires_at>$3 and p.status='pending_activation' and i.status='pending' for update of i, proof`, q.Enrollment, h.mac(q.SMSProof), now).Scan(&profileID, &invitationID, &email); err != nil {
 		}
 		code, err := h.otp.NewCode()
 		if err != nil {

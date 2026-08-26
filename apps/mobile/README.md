@@ -1,110 +1,111 @@
-# SysAP — Aplicativo Mobile
+# SysAP Mobile — Fundação Flutter (Android e iOS)
 
-Aplicativo nativo Expo / React Native do SysAP para Android e iOS.
+Aplicativo mobile oficial do SysAP desenvolvido em **Flutter + Dart**, projetado para alta performance e suporte nativo a **Android** e **iOS**.
 
 ---
 
-## 1. Configuração de Ambiente (`EXPO_PUBLIC_API_BASE_URL`)
+## 1. Escopo Desta Fase (Fase 3.3)
 
-O aplicativo consome exclusivamente a API REST do SysAP via HTTP/HTTPS.
+Esta entrega compreende a **fundação técnica** do aplicativo:
+* Projeto Flutter configurado para Android e iOS;
+* Arquitetura em 4 camadas desacopladas (`apresentação`, `aplicação`, `domínio`, `infraestrutura`);
+* Configuração pública segura por `--dart-define` com validação de HTTPS e exceção restrita a desenvolvimento local;
+* Tema Material 3 com suporte a modo claro e escuro;
+* Ponto de entrada limpo e tela de inicialização (bootstrap) acessível;
+* Testes unitários, de widget e de integração.
 
-Para definir o endereço da API, configure a variável de ambiente:
+> [!NOTE]
+> **Funcionalidades deliberadamente agendadas para as próximas fases:**
+> * Autenticação, sessão segura em Keystore/Keychain e rotas por perfil: **Fase 3.4**;
+> * Sensores, Health Connect, HealthKit, biometria e relógios: **Fase 3.5**;
+> * Validação nativa final e empacotamento: **Fase 3.6**.
+
+---
+
+## 2. Pré-requisitos
+
+* **Flutter SDK**: `>= 3.13.1` (canal `stable`)
+* **Dart SDK**: `>= 3.0.0`
+* **Android**: Android Studio e Android SDK configurados para desenvolvimento Android.
+* **iOS**: macOS com Xcode configurado para desenvolvimento e compilação de iOS.
+
+---
+
+## 3. Comandos de Desenvolvimento e Validação
+
+Dentro do diretório `apps/mobile/`:
 
 ```bash
-# Exemplo para emulador Android padrão (conecta ao loopback da máquina host):
-export EXPO_PUBLIC_API_BASE_URL="http://10.0.2.2:8080"
+# Obter dependências
+flutter pub get
 
-# Exemplo para emulador iOS / Web:
-export EXPO_PUBLIC_API_BASE_URL="http://127.0.0.1:8080"
+# Formatar código
+dart format --set-exit-if-changed .
 
-# Exemplo para aparelho físico na mesma rede Wi-Fi local (RFC 1918):
-export EXPO_PUBLIC_API_BASE_URL="http://192.168.1.150:8080"
+# Análise estática de código
+flutter analyze
 
-# Exemplo em ambiente de produção (obrigatório HTTPS):
-export EXPO_PUBLIC_API_BASE_URL="https://api.sysap.app"
-```
-
-> ⚠️ **Aviso Importante sobre Variáveis Públicas**:
-> `EXPO_PUBLIC_API_BASE_URL` é compilada publicamente no bundle do cliente.
-> **Nunca coloque chave Brevo, service_role, senha, OTP, token de servidor ou qualquer segredo em variáveis `EXPO_PUBLIC_*`**.
-
----
-
-## 2. Como Iniciar o App no Android / Emulador
-
-### Pré-requisitos
-1. Iniciar a API SysAP localmente:
-   ```bash
-   pnpm dev:api
-   ```
-2. Garantir que o emulador Android esteja em execução (`adb devices`).
-
-### Executando o aplicativo
-```bash
-# Na raiz do monorepo:
-pnpm --filter @sysap/mobile dev
-
-# Ou para abrir diretamente no Android:
-pnpm --filter @sysap/mobile android
-```
-
----
-
-## 3. Como Usar em Aparelho Físico em Rede Local
-
-1. Conecte o computador e o smartphone na **mesma rede Wi-Fi local**.
-2. Descubra o IP local da sua máquina (ex.: `192.168.1.150`).
-3. Inicie a API escutando no endereço local.
-4. Defina a variável antes de iniciar o Expo:
-   ```bash
-   export EXPO_PUBLIC_API_BASE_URL="http://192.168.1.150:8080"
-   pnpm --filter @sysap/mobile dev
-   ```
-5. Abra o aplicativo **Expo Go** no smartphone Android e leia o QR Code gerado no terminal.
-
----
-
-## 4. Como Rodar os Testes
-
-```bash
-# Executar suíte de testes unitários e de integração do mobile:
-pnpm --filter @sysap/mobile test
-
-# Executar checagem de tipos TypeScript:
-pnpm --filter @sysap/mobile typecheck
+# Executar suíte de testes unitários e de widget
+flutter test
 ```
 
 ---
 
-## 5. Fluxo Já Entregue (Fase 2.5.2)
+## 4. Configuração Segura por Ambiente (`--dart-define`)
+
+O aplicativo recebe exclusivamente parâmetros de configuração **públicos** e não sensíveis em tempo de compilação ou execução via `--dart-define`:
+
+### Execução em Desenvolvimento Local (Android Emulator)
+```bash
+flutter run -d android \
+  --dart-define=SYSAP_API_URL=http://10.0.2.2:8080 \
+  --dart-define=SYSAP_ENV=desenvolvimento
+```
+
+### Execução em Produção
+```bash
+flutter run -d android \
+  --dart-define=SYSAP_API_URL=https://api.sysap.com.br \
+  --dart-define=SYSAP_ENV=producao
+```
+
+> [!WARNING]
+> **Aviso de Segurança:**
+> 1. Valores passados por `--dart-define` ficam embutidos no binário compilado. **Nunca passe senhas, chaves privadas, tokens ou segredos via `--dart-define`**.
+> 2. O ambiente de produção **exige obrigatoriamente** o protocolo seguro `HTTPS`. Conexões `HTTP` são rejeitadas pelo validador do aplicativo.
+> 3. Conexões `HTTP` são toleradas estritamente em ambiente de desenvolvimento local (`desenvolvimento`).
+
+---
+
+## 5. Estrutura Arquitetural
 
 ```text
-Usuário abre o app
-→ entra com matrícula e senha
-→ app chama a API real existente (/v1/auth/login)
-→ sessão é armazenada com segurança no dispositivo (expo-secure-store)
-→ app confirma perfil e papel na API (/v1/me)
-→ Owner vai para a área (owner)
-→ Athlete vai para a área (athlete)
-→ logout encerra a sessão local e remota (/v1/auth/logout)
+apps/mobile/
+  android/          # Projeto nativo Android
+  ios/              # Projeto nativo iOS
+  lib/
+    main.dart       # Ponto de entrada mínimo
+    aplicacao/      # Casos de uso de bootstrap e configuração
+      configuracao/
+      inicializacao/
+    dominio/        # Tipos puros de falha e contratos sem dependência de framework
+      falhas/
+    infraestrutura/ # Adaptadores técnicos desacoplados
+      plataforma/
+    apresentacao/   # Telas, temas e componentes acessíveis
+      componentes/
+      inicializacao/
+      navegacao/
+      tema/
+  test/             # Testes unitários e de widget
+  integration_test/ # Testes de integração de fluxo
+  pubspec.yaml      # Manifesto Flutter
+  README.md
 ```
 
 ---
 
-## 6. Fluxos Não Entregues Nesta Fase (Previstos para Fase 3)
+## 6. Limitações de Plataforma e Ambiente
 
-- Cadastro de atletas e envio de convites (Fase 3.1)
-- Ativação de conta por desafio seguro OTP (Fase 3.2)
-- Confirmação de e-mail e criação de senha (Fase 3.3)
-- Recuperação de senha por desafio seguro (Fase 3.4)
-- Integrações transacionais de e-mail/SMS (Brevo/Twilio via Supabase Auth)
-- Painel esportivo e métricas de desempenho
-
----
-
-## 7. Diretrizes de Segurança
-
-- **Credenciais**: Senhas nunca são persistidas em disco ou memória de longa duração.
-- **Sessão**: O par `access_token` e `refresh_token` é armazenado exclusivamente no `expo-secure-store` (Android Keystore / iOS Keychain).
-- **Sem WebView / Sem AsyncStorage**: Nenhum token ou dado sensível é mantido em armazenamento inseguro.
-- **Autorização**: O cliente mobile nunca toma decisões de permissão baseado apenas no estado local; a API Go é a fonte de verdade autoritativa via `GET /v1/me`.
+* **Android**: Pode ser compilado e executado em Linux/macOS/Windows com o Android SDK instalado.
+* **iOS**: A compilação nativa, assinatura de código e validação de iOS **dependem obrigatoriamente de macOS com Xcode**. Em ambientes Linux, o código Dart/Flutter de iOS é mantido e validado estaticamente, mas o build nativo é executado exclusivamente em macOS/CI macOS.
