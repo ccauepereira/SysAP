@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 
+import '../../aplicacao/consentimento/gerenciador_de_consentimento.dart';
 import '../../aplicacao/sessao/gerenciador_de_sessao.dart';
 import '../../dominio/entidades/identidade_do_usuario.dart';
 import '../../dominio/entidades/papel_do_usuario.dart';
 import '../../dominio/entidades/sessao_autenticada.dart';
+import '../../infraestrutura/biometria/autenticacao_biometrica_da_plataforma.dart';
+import '../../infraestrutura/consentimento/repositorio_de_consentimentos_local.dart';
+import '../../infraestrutura/notificacoes/notificacoes_locais_da_plataforma.dart';
+import '../../infraestrutura/saude/fonte_de_saude_da_plataforma.dart';
+import '../consentimento/tela_de_gerenciamento_de_consentimento.dart';
+import '../notificacoes/tela_de_preferencias_de_notificacao.dart';
+import '../seguranca/componente_de_bloqueio_biometrico.dart';
 import '../tema/tema_sysap.dart';
 
 /// Roteador de apresentação que renderiza a casca segura correspondente ao papel confirmado pela API.
@@ -73,7 +81,7 @@ class CascaDaAreaOwner extends StatelessWidget {
       nomeUsuario: identidade.nomeDeExibicao,
       icone: Icons.admin_panel_settings_outlined,
       gerenciadorDeSessao: gerenciadorDeSessao,
-      descricao: 'Centro de Comando Comercial e Operacional em preparação.\nOs módulos reais de turmas, ocupação e presença serão conectados a partir das próximas fases.',
+      descricao: 'Centro de Comando Comercial e Operacional em preparação.\nOs dados individuais de atletas exigem consentimento explícito e membership ativa.',
     );
   }
 }
@@ -91,13 +99,196 @@ class CascaDaAreaAthlete extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _LayoutCascaSegura(
-      tituloArea: 'Área do Atleta — SysAP',
-      rotuloPapel: 'Atleta',
-      nomeUsuario: identidade.nomeDeExibicao,
-      icone: Icons.directions_run_outlined,
-      gerenciadorDeSessao: gerenciadorDeSessao,
-      descricao: 'Painel do atleta em preparação.\nAs rotas de treinos, confirmação de presença e integrações de sensores esportivos serão conectadas com consentimento explícito.',
+    final organizacaoId =
+        identidade.vinculoPrincipal?.idDaOrganizacao ?? 'org-local';
+    final repoConsentimento = RepositorioDeConsentimentosLocal();
+    final gerenciadorConsentimento = GerenciadorDeConsentimento(
+      repositorio: repoConsentimento,
+    );
+    final fonteSaude = FonteDeSaudeDaPlataforma();
+    final servicoBiometria = AutenticacaoBiometricaDaPlataforma();
+    final servicoNotificacoes = NotificacoesLocaisDaPlataforma();
+
+    return Scaffold(
+      backgroundColor: TemaSysAP.corFundoObsidiana,
+      appBar: AppBar(
+        title: const Text(
+          'Área do Atleta — SysAP',
+          style: TextStyle(fontSize: 16),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Encerrar Sessão',
+            icon: const Icon(Icons.logout, color: TemaSysAP.corTextoSecundario),
+            onPressed: () => gerenciadorDeSessao.logout(),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _construirCabecalhoUsuario(
+                nomeUsuario: identidade.nomeDeExibicao,
+                rotuloPapel: 'Atleta',
+                icone: Icons.directions_run_outlined,
+              ),
+              const SizedBox(height: 16),
+              Card(
+                color: TemaSysAP.corSuperficieEscura,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Capacidades e Dispositivos Esportivos',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Gerencie os consentimentos de sensores, fontes de saúde e preferências locais de forma transparente.',
+                        style: TextStyle(
+                          color: TemaSysAP.corTextoSecundario,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  TelaDeGerenciamentoDeConsentimento(
+                                    atletaId: identidade.idDoPerfil,
+                                    organizacaoId: organizacaoId,
+                                    repositorioConsentimentos:
+                                        repoConsentimento,
+                                    gerenciadorConsentimento:
+                                        gerenciadorConsentimento,
+                                    fonteSaude: fonteSaude,
+                                  ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.shield_outlined, size: 18),
+                        label: const Text('Gerenciar Consentimento e Sensores'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: TemaSysAP.corFundoObsidiana,
+                          foregroundColor: TemaSysAP.corDouradoInteracao,
+                          side: const BorderSide(
+                            color: TemaSysAP.corBordaTatica,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => TelaDePreferenciasDeNotificacao(
+                                servicoNotificacoes: servicoNotificacoes,
+                              ),
+                            ),
+                          );
+                        },
+                        icon: const Icon(
+                          Icons.notifications_outlined,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'Preferências de Notificações Locais',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: TemaSysAP.corFundoObsidiana,
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(
+                            color: TemaSysAP.corBordaTatica,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ComponenteDeBloqueioBiometrico(biometria: servicoBiometria),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () => gerenciadorDeSessao.logout(),
+                icon: const Icon(Icons.logout),
+                label: const Text('Encerrar Sessão'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: TemaSysAP.corSuperficieEscura,
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: TemaSysAP.corBordaTatica),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _construirCabecalhoUsuario({
+    required String nomeUsuario,
+    required String rotuloPapel,
+    required IconData icone,
+  }) {
+    return Card(
+      color: TemaSysAP.corSuperficieEscura,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: TemaSysAP.corDouradoPrincipal.withValues(
+                alpha: 0.15,
+              ),
+              child: Icon(
+                icone,
+                color: TemaSysAP.corDouradoPrincipal,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    nomeUsuario.isNotEmpty ? nomeUsuario : 'Atleta Autenticado',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    rotuloPapel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: TemaSysAP.corDouradoInteracao,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
