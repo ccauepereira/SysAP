@@ -1,11 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   validatePackagePolicy,
   validateRepositoryPaths,
   validateWorkflowText,
 } from "./repository-policy.mjs";
+
+test("validates every new foundation workflow and rejects a mutable Action", () => {
+  for (const file of ["pr-checks.yml", "security.yml"]) {
+    const text = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), "utf8");
+    assert.deepEqual(validateWorkflowText(text, false), [], file);
+    assert.ok(validateWorkflowText(text.replace(/actions\/checkout@[a-f0-9]{40}/, "actions/checkout@main"), false).length > 0);
+  }
+});
+
+test("mandatory foundation jobs propagate failures independently of Laya", () => {
+  const text = readFileSync(new URL("../.github/workflows/pr-checks.yml", import.meta.url), "utf8");
+  const [mandatory, advisory] = text.split("  laya-advisory:");
+  assert.ok(advisory);
+  assert.doesNotMatch(mandatory, /continue-on-error: true|\|\|\s*true/);
+  assert.match(advisory, /continue-on-error: true/);
+  const security = readFileSync(new URL("../.github/workflows/security.yml", import.meta.url), "utf8");
+  assert.doesNotMatch(security, /continue-on-error: true|\|\|\s*true/);
+});
 
 function validPackages() {
   const scripts = Object.fromEntries(

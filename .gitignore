@@ -35,3 +35,13 @@ id_ed25519*
 **/*.dump
 **/*.backup
 **/*.bak
+
+# Flutter and local advisory-review artifacts
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/build/
+apps/mobile/coverage/
+.laya-pr-gate/
+tools/laya_pr_gate/__pycache__/
+.venv-laya/
