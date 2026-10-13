@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/email"
@@ -18,7 +17,7 @@ type EnrollmentDeliveryProvider interface {
 type unavailableEnrollmentDeliveryProvider struct{}
 
 func (unavailableEnrollmentDeliveryProvider) SendEnrollment(context.Context, string, string, string) error {
-	return errors.New("delivery_unavailable")
+	return enrollmentDeliveryRejected{reason: "delivery_provider_unavailable"}
 }
 
 // noOpEnrollmentDeliveryProvider is used only by legacy unit fixtures that
@@ -36,13 +35,21 @@ type EmailEnrollmentDeliveryProvider struct {
 	emailProvider *email.BrevoEmailProvider
 }
 
+type enrollmentDeliveryRejected struct{ reason string }
+
+func (e enrollmentDeliveryRejected) Error() string           { return e.reason }
+func (e enrollmentDeliveryRejected) DeliveryOutcome() string { return "failed" }
+
 func NewEmailEnrollmentDeliveryProvider(ep *email.BrevoEmailProvider) *EmailEnrollmentDeliveryProvider {
 	return &EmailEnrollmentDeliveryProvider{emailProvider: ep}
 }
 
 func (p *EmailEnrollmentDeliveryProvider) SendEnrollment(ctx context.Context, channel, destination, enrollment string) error {
 	if channel != "email" {
-		return errors.New("unsupported_delivery_channel")
+		return enrollmentDeliveryRejected{reason: "unsupported_delivery_channel"}
+	}
+	if p == nil || p.emailProvider == nil {
+		return enrollmentDeliveryRejected{reason: "delivery_provider_unavailable"}
 	}
 
 	htmlContent := fmt.Sprintf(`

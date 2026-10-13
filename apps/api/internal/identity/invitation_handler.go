@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -40,6 +41,7 @@ type athleteInvitationResponse struct {
 	Status          string    `json:"status"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	DeliveryChannel string    `json:"delivery_channel"`
+	DeliveryStatus  string    `json:"delivery_status"`
 }
 
 type invitationHandler struct {
@@ -101,6 +103,10 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := httpserver.RequestIDFromContext(ctx)
 	w.Header().Set("Cache-Control", "no-store")
+	if r.PathValue("invitation_id") != "" {
+		h.serveDeliveryRoute(w, r)
+		return
+	}
 
 	authenticated, ok := auth.AuthenticatedContextFromContext(ctx)
 	if !ok {
@@ -158,7 +164,7 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.fullName() == "" || req.PhoneE164 == "" || req.Email == "" ||
-		(req.EnrollmentDeliveryChannel != "sms" && req.EnrollmentDeliveryChannel != "email") ||
+		req.EnrollmentDeliveryChannel != "email" ||
 		req.TeamID == uuid.Nil || req.FootballPosition == "" || req.BirthDate == "" || req.Locality == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse{
 			Error: errorDetail{
@@ -185,11 +191,17 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var response athleteInvitationResponse
 	var conflictErr error
 	var internalErr error
+	var enrollmentNumber, destination string
+	var createdInvitation bool
 
 	err = authorization.WithMembershipContext(ctx, h.databasePool, dbIdentity, organizationID, authenticated.ProfileID.String(), func(tx pgx.Tx, membership authorization.Membership) error {
 		if membership.Role != "owner" {
 			conflictErr = errors.New("forbidden")
 			return conflictErr
+		}
+		if err := validateActiveInvitationOrganization(ctx, tx, organizationID); err != nil {
+			conflictErr = err
+			return err
 		}
 		if err := RequireAdministrativeAAL2(ctx, tx, authenticated, string(membership.Role)); err != nil {
 			conflictErr = err
@@ -219,18 +231,21 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			// Fetch the existing invitation
 			err = tx.QueryRow(ctx, `
-				SELECT i.id, i.profile_id, i.status, i.expires_at, COALESCE(p.enrollment_delivery_channel, 'sms')
+				SELECT i.id, i.profile_id,
+					CASE WHEN i.status = 'consumed' THEN 'activated'
+					     WHEN i.status = 'pending' AND i.expires_at <= $3 THEN 'expired'
+					     ELSE 'pending_activation' END,
+					i.expires_at, COALESCE(p.enrollment_delivery_channel, 'sms'), i.delivery_status
 				FROM app.activation_invitations i
 				JOIN app.athlete_profiles p ON i.profile_id = p.id
 				WHERE i.id = $1 AND i.organization_id = $2
-			`, resourceID, organizationID).Scan(
-				&response.InvitationID, &response.ProfileID, &response.Status, &response.ExpiresAt, &response.DeliveryChannel,
+			`, resourceID, organizationID, now).Scan(
+				&response.InvitationID, &response.ProfileID, &response.Status, &response.ExpiresAt, &response.DeliveryChannel, &response.DeliveryStatus,
 			)
 			if err != nil {
 				internalErr = err
 				return err
 			}
-			response.Status = "pending_activation"
 			return nil
 		}
 
@@ -241,7 +256,6 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Try inserting new profile & invitation
-		var enrollmentNumber string
 		var profileID uuid.UUID
 
 		// Attempt to insert profile with generated enrollment number
@@ -294,19 +308,27 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			internalErr = err
 			return err
 		}
+		if _, err := tx.Exec(ctx, `insert into app.profiles (id, full_name) values ($1, $2)`, profileID, req.fullName()); err != nil {
+			internalErr = err
+			return err
+		}
+		if _, err := tx.Exec(ctx, `insert into app.organization_memberships (organization_id, profile_id, role, status) values ($1, $2, 'athlete', 'pending_activation')`, organizationID, profileID); err != nil {
+			internalErr = err
+			return err
+		}
 
 		if _, err := tx.Exec(ctx, `insert into app.training_group_athletes (organization_id, training_group_id, athlete_profile_id) values ($1,$2,$3)`, organizationID, req.TeamID, profileID); err != nil {
 			internalErr = err
 			return err
 		}
 
-		destination := req.PhoneE164
+		destination = req.PhoneE164
 		if req.EnrollmentDeliveryChannel == "email" {
 			destination = req.Email
 		}
-		if err := h.delivery.SendEnrollment(ctx, req.EnrollmentDeliveryChannel, destination, enrollmentNumber); err != nil {
-			conflictErr = errors.New("delivery_unavailable")
-			return conflictErr
+		if _, err := tx.Exec(ctx, `update app.activation_invitations set delivery_status='sending', delivery_attempt_count=1, delivery_last_attempt_at=$1 where id=$2`, now, invitationID); err != nil {
+			internalErr = err
+			return err
 		}
 
 		// Insert Idempotency record
@@ -321,6 +343,10 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				conflictErr = errors.New("idempotency_conflict_concurrent")
 				return err
 			}
+			internalErr = err
+			return err
+		}
+		if _, err := tx.Exec(ctx, `insert into app.security_audit_events (organization_id,actor_profile_id,event_type,result,reason_code,resource_type,resource_id,request_id,network_fingerprint,metadata) values ($1,$2,'invitation_delivery_attempted','accepted','attempt_started','activation_invitation',$3,$4,'','{}'::jsonb)`, organizationID, membership.ProfileID, invitationID.String(), reqID); err != nil {
 			internalErr = err
 			return err
 		}
@@ -346,7 +372,9 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Status:          "pending_activation",
 			ExpiresAt:       expiresAt,
 			DeliveryChannel: req.EnrollmentDeliveryChannel,
+			DeliveryStatus:  "sending",
 		}
+		createdInvitation = true
 
 		return nil
 	})
@@ -358,7 +386,7 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if conflictErr.Error() == "forbidden" {
+		if conflictErr.Error() == "forbidden" || errors.Is(conflictErr, errInvitationForbidden) {
 			writeJSON(w, http.StatusForbidden, errorResponse{
 				Error: errorDetail{Code: "access_denied", Message: "access denied", RequestID: reqID},
 			})
@@ -379,12 +407,6 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if conflictErr.Error() == "data_conflict" {
 			writeJSON(w, http.StatusConflict, errorResponse{
 				Error: errorDetail{Code: "data_conflict", Message: "contact data already exists", RequestID: reqID},
-			})
-			return
-		}
-		if conflictErr.Error() == "delivery_unavailable" {
-			writeJSON(w, http.StatusServiceUnavailable, errorResponse{
-				Error: errorDetail{Code: "service_unavailable", Message: "service is temporarily unavailable", RequestID: reqID},
 			})
 			return
 		}
@@ -411,6 +433,45 @@ func (h *invitationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if !createdInvitation && response.DeliveryStatus == "sending" {
+		response.DeliveryStatus = "unknown"
+	}
+	if createdInvitation {
+		outcome := classifyEnrollmentDelivery(h.delivery.SendEnrollment(ctx, req.EnrollmentDeliveryChannel, destination, enrollmentNumber))
+		persistErr := authorization.WithMembershipContext(ctx, h.databasePool, dbIdentity, organizationID, authenticated.ProfileID.String(), func(tx pgx.Tx, membership authorization.Membership) error {
+			if membership.Role != "owner" {
+				return errors.New("forbidden")
+			}
+			if err := validateActiveInvitationOrganization(ctx, tx, organizationID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update app.activation_invitations set delivery_status=$1, updated_at=$2 where id=$3 and organization_id=$4 and status='pending'`, outcome, h.clock().UTC(), response.InvitationID, organizationID); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `insert into app.security_audit_events (organization_id, actor_profile_id, event_type, result, reason_code, resource_type, resource_id, request_id, network_fingerprint, metadata) values ($1,$2,'invitation_delivery_attempted',$3,'provider_outcome','activation_invitation',$4,$5,'','{}'::jsonb)`, organizationID, membership.ProfileID, outcome, response.InvitationID.String(), reqID)
+			return err
+		})
+		if persistErr != nil {
+			// If the result cannot be durably recorded, the committed "sending"
+			// marker prevents an automatic retry; expose only the safe state.
+			outcome = "unknown"
+		}
+		response.DeliveryStatus = outcome
+	}
 
 	writeJSON(w, http.StatusCreated, response)
+}
+
+func validateActiveInvitationOrganization(ctx context.Context, tx pgx.Tx, organizationID string) error {
+	var status string
+	if err := tx.QueryRow(ctx, `select status from app.organizations where id=$1`, organizationID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errInvitationForbidden
+		}
+		return err
+	}
+	if status != "active" {
+		return errInvitationForbidden
+	}
+	return nil
 }

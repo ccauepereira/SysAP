@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,12 +17,120 @@ import (
 
 	"github.com/ccauepereira/SysAP/apps/api/internal/identity"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/auth"
+	"github.com/ccauepereira/SysAP/apps/api/internal/platform/authorization"
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // A stub enrollment generator to ensure uniqueness and predictability in tests.
 type testEnrollmentGenerator struct {
 	counter int
+}
+
+type recordingEnrollmentDelivery struct{ calls int }
+
+func (p *recordingEnrollmentDelivery) SendEnrollment(context.Context, string, string, string) error {
+	p.calls++
+	return nil
+}
+
+type failedEnrollmentDelivery struct{}
+
+func (failedEnrollmentDelivery) SendEnrollment(context.Context, string, string, string) error {
+	return knownDeliveryFailure{}
+}
+
+type knownDeliveryFailure struct{}
+
+func (knownDeliveryFailure) Error() string           { return "safe fake delivery rejection" }
+func (knownDeliveryFailure) DeliveryOutcome() string { return "failed" }
+
+func TestInvitationDeliveryFailureKeepsPendingAccount(t *testing.T) {
+	pool, teardown, orgID, profileOwner, _, _, ownerAuthID, _, _, trainingGroupID := setupInvitationIntegrationTest(t)
+	defer teardown()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := identity.NewInvitationHandlerWithDelivery(pool, logger, time.Now, &testEnrollmentGenerator{}, failedEnrollmentDelivery{})
+	authContext := auth.AuthenticatedContext{SubjectID: ownerAuthID, ProfileID: profileOwner, SessionID: uuid.New(), AAL: auth.AAL2}
+	middleware := auth.Middleware(&stubTokenVerifier{token: auth.VerifiedToken{}}, &stubSessionResolver{context: authContext})
+	requestBody, _ := json.Marshal(map[string]string{
+		"full_name": "Fictional Pending Athlete", "phone_e164": "+15555550123", "email": "pending@example.test",
+		"birth_date": "2010-01-15", "locality": "Fictional City", "team_id": trainingGroupID.String(),
+		"football_position": "midfielder", "enrollment_delivery_channel": "email",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+orgID.String()+"/athlete-invitations", bytes.NewReader(requestBody))
+	req.SetPathValue("organization_id", orgID.String())
+	req.Header.Set("X-Organization-ID", orgID.String())
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	req.Header.Set("Authorization", "Bearer fake")
+	recorder := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("invitation create returned unexpected status %d", recorder.Code)
+	}
+	var response struct {
+		InvitationID   uuid.UUID `json:"invitation_id"`
+		ProfileID      uuid.UUID `json:"profile_id"`
+		Status         string    `json:"status"`
+		DeliveryStatus string    `json:"delivery_status"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal("invitation response was not valid JSON")
+	}
+	if response.Status != "pending_activation" || response.DeliveryStatus != "failed" {
+		t.Fatalf("expected pending account with failed delivery state; got status=%q delivery=%q", response.Status, response.DeliveryStatus)
+	}
+	dbIdentity := database.AuthenticatedContext{SubjectID: pgtype.UUID{Bytes: ownerAuthID, Valid: true}, SessionID: pgtype.UUID{Bytes: authContext.SessionID, Valid: true}}
+	var membershipStatus, invitationStatus, deliveryStatus, athleteStatus string
+	err := authorization.WithMembershipContext(context.Background(), pool, dbIdentity, orgID.String(), profileOwner.String(), func(tx pgx.Tx, _ authorization.Membership) error {
+		return tx.QueryRow(context.Background(), `
+			select membership.status, invitation.status, invitation.delivery_status, athlete.status
+			from app.activation_invitations invitation
+			join app.organization_memberships membership on membership.organization_id=invitation.organization_id and membership.profile_id=invitation.profile_id
+			join app.athlete_profiles athlete on athlete.id=invitation.profile_id
+			where invitation.id=$1 and invitation.organization_id=$2
+		`, response.InvitationID, orgID).Scan(&membershipStatus, &invitationStatus, &deliveryStatus, &athleteStatus)
+	})
+	if err != nil {
+		t.Fatal("could not verify persisted pending invitation")
+	}
+	if membershipStatus != "pending_activation" || invitationStatus != "pending" || deliveryStatus != "failed" || athleteStatus != "pending_activation" {
+		t.Fatal("delivery failure did not preserve a pending invitation and membership")
+	}
+}
+
+func TestInvitationMembershipRLSRejectsUninvitedActiveInsert(t *testing.T) {
+	_, teardown, orgID, _, _, _, _, _, _, _ := setupInvitationIntegrationTest(t)
+	defer teardown()
+	dbURL := os.Getenv("SYSAP_TEST_DATABASE_URL")
+	adminPool, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatal("could not open isolated integration database")
+	}
+	defer adminPool.Close()
+
+	profileID := uuid.New()
+	if _, err := adminPool.Exec(context.Background(), `insert into app.profiles (id, full_name) values ($1, 'Uninvited Fictional Profile')`, profileID); err != nil {
+		t.Fatal("could not create isolated RLS fixture")
+	}
+
+	tx, err := adminPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal("could not begin RLS assertion")
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), `set local role sysap_api`); err != nil {
+		t.Fatal("could not assume API role for RLS assertion")
+	}
+	if _, err := tx.Exec(context.Background(), `select set_config('app.current_organization_id', $1, true)`, orgID.String()); err != nil {
+		t.Fatal("could not set tenant context for RLS assertion")
+	}
+	_, err = tx.Exec(context.Background(), `insert into app.organization_memberships (organization_id, profile_id, role, status) values ($1, $2, 'athlete', 'active')`, orgID, profileID)
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) || postgresError.Code != "42501" {
+		t.Fatal("RLS did not reject an active membership without a valid invitation")
+	}
 }
 
 func (g *testEnrollmentGenerator) Generate() (string, error) {
@@ -117,7 +226,8 @@ func TestCreateAthleteInvitation(t *testing.T) {
 	}
 
 	enrollGen := &testEnrollmentGenerator{}
-	handler := identity.NewInvitationHandler(pool, logger, clock, enrollGen)
+	delivery := &recordingEnrollmentDelivery{}
+	handler := identity.NewInvitationHandlerWithDelivery(pool, logger, clock, enrollGen, delivery)
 
 	t.Run("owner can create invitation successfully", func(t *testing.T) {
 		reqBody := map[string]string{
@@ -128,7 +238,7 @@ func TestCreateAthleteInvitation(t *testing.T) {
 			"locality":                    "Fictional City",
 			"team_id":                     trainingGroupID.String(),
 			"football_position":           "midfielder",
-			"enrollment_delivery_channel": "sms",
+			"enrollment_delivery_channel": "email",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -162,6 +272,9 @@ func TestCreateAthleteInvitation(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201 Created, got %d: %s", rr.Code, rr.Body.String())
 		}
+		if delivery.calls != 1 {
+			t.Fatalf("expected one provider attempt, got %d", delivery.calls)
+		}
 
 		var resp map[string]interface{}
 		json.Unmarshal(rr.Body.Bytes(), &resp)
@@ -183,6 +296,9 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 		if rr2.Code != http.StatusCreated {
 			t.Fatalf("expected 201 for idempotent request, got %d", rr2.Code)
+		}
+		if delivery.calls != 1 {
+			t.Fatalf("idempotent replay repeated provider delivery; calls=%d", delivery.calls)
 		}
 
 		// Verify different payload fails
@@ -210,7 +326,7 @@ func TestCreateAthleteInvitation(t *testing.T) {
 			"locality":                    "Fictional City",
 			"team_id":                     trainingGroupID.String(),
 			"football_position":           "defender",
-			"enrollment_delivery_channel": "sms",
+			"enrollment_delivery_channel": "email",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -285,7 +401,7 @@ func TestCreateAthleteInvitation(t *testing.T) {
 			"locality":                    "Fictional City",
 			"team_id":                     trainingGroupID.String(),
 			"football_position":           "goalkeeper",
-			"enrollment_delivery_channel": "sms",
+			"enrollment_delivery_channel": "email",
 		}
 		b, _ := json.Marshal(reqBody)
 
@@ -323,7 +439,7 @@ func TestCreateAthleteInvitation(t *testing.T) {
 			"locality":                    "Fictional City",
 			"team_id":                     trainingGroupID.String(),
 			"football_position":           "midfielder",
-			"enrollment_delivery_channel": "sms",
+			"enrollment_delivery_channel": "email",
 		}
 		b, _ := json.Marshal(reqBody)
 

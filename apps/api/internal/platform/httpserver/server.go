@@ -96,6 +96,8 @@ func newHandler(
 		}
 		if invitationHandler != nil {
 			mux.Handle("POST /v1/organizations/{organization_id}/athlete-invitations", authMiddleware(invitationHandler))
+			mux.Handle("GET /v1/athlete-invitations/{invitation_id}", authMiddleware(invitationHandler))
+			mux.Handle("POST /v1/athlete-invitations/{invitation_id}/resend", authMiddleware(invitationHandler))
 		}
 		if sessionHandler != nil {
 			mux.Handle("POST /v1/auth/logout", authMiddleware(sessionHandler))
@@ -113,6 +115,8 @@ func newHandler(
 		}
 		mux.HandleFunc("GET /v1/me", notAuthFunc)
 		mux.HandleFunc("POST /v1/organizations/{organization_id}/athlete-invitations", notAuthFunc)
+		mux.HandleFunc("GET /v1/athlete-invitations/{invitation_id}", notAuthFunc)
+		mux.HandleFunc("POST /v1/athlete-invitations/{invitation_id}/resend", notAuthFunc)
 		mux.HandleFunc("POST /v1/auth/logout", notAuthFunc)
 		mux.HandleFunc("POST /v1/auth/logout-all", notAuthFunc)
 		mux.HandleFunc("GET /v1/auth/mfa", notAuthFunc)

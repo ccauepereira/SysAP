@@ -378,6 +378,9 @@ func (h *activationHandler) complete(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return errors.New("invalid_proof")
 		}
+		if _, e = tx.Exec(r.Context(), `select set_config('app.current_organization_id', $1, true)`, orgID.String()); e != nil {
+			return e
+		}
 
 		var err error
 		authID, err = h.admin.CreateUser(r.Context(), phone, q.Password)
@@ -387,14 +390,19 @@ func (h *activationHandler) complete(w http.ResponseWriter, r *http.Request) {
 
 		_, e = tx.Exec(r.Context(), `
 			insert into app.profiles (id, auth_user_id, full_name, created_at, updated_at)
-			values ($1, $2, $3, $4, $4)`, profileID, authID, name, now)
+			values ($1, $2, $3, $4, $4)
+			on conflict (id) do update set auth_user_id = excluded.auth_user_id,
+			  full_name = excluded.full_name, updated_at = excluded.updated_at
+			where app.profiles.auth_user_id is null`, profileID, authID, name, now)
 		if e != nil {
 			return errors.New("profile_failed")
 		}
 
 		_, e = tx.Exec(r.Context(), `
 			insert into app.organization_memberships (organization_id, profile_id, role, status, activated_at, created_at, updated_at)
-			values ($1, $2, 'athlete', 'active', $3, $3, $3)`, orgID, profileID, now)
+			values ($1, $2, 'athlete', 'active', $3, $3, $3)
+			on conflict (organization_id, profile_id) do update set status = 'active', activated_at = excluded.activated_at, updated_at = excluded.updated_at
+			where app.organization_memberships.status = 'pending_activation'`, orgID, profileID, now)
 		if e != nil {
 			return errors.New("membership_failed")
 		}

@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 		handler        http.HandlerFunc
 		message        TransactionalEmail
 		wantErr        bool
+		wantOutcome    string
 		errContains    []string
 		errNotContains []string
 	}{
@@ -75,6 +77,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key"},
 		},
 		{
@@ -85,6 +88,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key"},
 		},
 		{
@@ -96,6 +100,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "failed",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key", "bad request"},
 		},
 		{
@@ -107,6 +112,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key", "internal error"},
 		},
 		{
@@ -118,6 +124,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key"},
 		},
 		{
@@ -129,6 +136,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key", "{invalid-json}"},
 		},
 		{
@@ -139,6 +147,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key"},
 		},
 		{
@@ -154,6 +163,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			},
 			message:        TransactionalEmail{To: "dest@test.com", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "unknown",
 			errNotContains: []string{"dest@test.com", "Hello", "Test", "valid-key"},
 		},
 		{
@@ -161,6 +171,7 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 			handler:        func(w http.ResponseWriter, r *http.Request) {},
 			message:        TransactionalEmail{To: "invalid-dest", Subject: "Test", Text: "Hello"},
 			wantErr:        true,
+			wantOutcome:    "failed",
 			errNotContains: []string{"invalid-dest", "Hello", "Test", "valid-key"},
 		},
 	}
@@ -180,6 +191,10 @@ func TestBrevoEmailProvider_Send(t *testing.T) {
 				if err == nil {
 					t.Errorf("Send() erro esperado, mas não ocorreu")
 				} else {
+					var classified interface{ DeliveryOutcome() string }
+					if !errors.As(err, &classified) || classified.DeliveryOutcome() != tt.wantOutcome {
+						t.Errorf("Send() outcome did not match expected safe classification")
+					}
 					errStr := err.Error()
 					for _, contains := range tt.errContains {
 						if !strings.Contains(errStr, contains) {
