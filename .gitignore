@@ -45,3 +45,34 @@ apps/mobile/coverage/
 .laya-pr-gate/
 tools/laya_pr_gate/__pycache__/
 .venv-laya/
+
+# Multimédia e imagens
+DashboradMobile.png
+HappyHorse-*
+videoarthur.mp4
+
+# Ficheiros de patch e diff
+*.diff
+*.patch
+
+# Ficheiros e documentação SysAP
+SysAP_*
+sysap-*
+
+# Configurações e ficheiros de projeto
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+redocly.yaml
+test-env.mjs
+
+# --- GERENCIAMENTO DE READMES ---
+# Ignora todos os README.md situados em subpastas
+**/README.md
+# Mantém exclusivamente o README.md na raiz do projeto
+!/README.md
+
+# --- NOVAS PASTAS E RECURSOS ---
+docs/
+assets/brand/
+artur-performance-logo.png

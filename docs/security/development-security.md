@@ -29,9 +29,11 @@ Dependencias diretas usam versoes exatas. Antes de adicionar ou atualizar:
 5. execute auditoria, testes e build;
 6. revise manifest e lockfile integralmente.
 
-`pnpm security:dependencies` falha para qualquer advisory novo e aceita somente
-o risco PostCSS exato documentado. Ferramentas nao viram dependencias de
-producao da API.
+`pnpm security:dependencies` falha para qualquer advisory e aceita somente a
+excecao temporaria exata registrada em `docs/security/accepted-risks.md`, que
+tem vencimento e aparece explicitamente no relatorio. O processo completo esta
+em `docs/security/dependency-management.md`. Ferramentas nao viram dependencias
+de producao da API.
 
 ## Banco e menor privilegio
 
