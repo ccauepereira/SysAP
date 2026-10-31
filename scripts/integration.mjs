@@ -13,7 +13,7 @@ import {
   waitForAPI,
   waitForWeb,
 } from "./local-runtime.mjs";
-import { runCommand } from "./run-command.mjs";
+import { initializeIntegrationDatabase } from "./integration-setup.mjs";
 import { safeChildEnvironment, sanitizeMessage } from "./runtime-policy.mjs";
 
 const database = new LocalDatabaseSession();
@@ -43,9 +43,7 @@ function assertNoConnectionDetails(text, databaseURL) {
 async function main() {
   await assertPortAvailable("127.0.0.1", 8080);
   await assertPortAvailable("127.0.0.1", 3000);
-  await database.start({ requireInactive: true });
-  await database.resetAndLint();
-  const environment = await database.environment();
+  const environment = await initializeIntegrationDatabase(database);
 
   const goCache = path.join(runtimeDirectory, "go-cache");
   // API integration packages use one local PostgreSQL instance and create
