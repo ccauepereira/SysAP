@@ -7,3 +7,7 @@ export async function initializeIntegrationDatabase(databaseSession, executeComm
   await executeCommand("pnpm", ["db:env"], { cwd: repositoryRoot, env: process.env });
   return databaseSession.environment();
 }
+
+export function integrationAPIEnvironment(databaseEnvironment) {
+  return { SYSAP_DATABASE_URL: databaseEnvironment.SYSAP_DATABASE_URL };
+}

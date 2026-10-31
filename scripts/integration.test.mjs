@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { initializeIntegrationDatabase } from "./integration-setup.mjs";
+import {
+  initializeIntegrationDatabase,
+  integrationAPIEnvironment,
+} from "./integration-setup.mjs";
 import { repositoryRoot } from "./local-runtime.mjs";
 
 test("generates the local database environment after reset and before reading it", async () => {
@@ -59,4 +62,15 @@ test("does not read the database environment when local environment generation f
     /local environment generation failed/,
   );
   assert.deepEqual(calls, ["start", "resetAndLint", "db:env"]);
+});
+
+test("passes the validated API database URL as an environment object", () => {
+  const source = {
+    SYSAP_DATABASE_URL: "local-database-url",
+    SYSAP_TEST_DATABASE_URL: "local-test-database-url",
+  };
+
+  assert.deepEqual(integrationAPIEnvironment(source), {
+    SYSAP_DATABASE_URL: "local-database-url",
+  });
 });

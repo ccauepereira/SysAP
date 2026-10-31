@@ -13,7 +13,10 @@ import {
   waitForAPI,
   waitForWeb,
 } from "./local-runtime.mjs";
-import { initializeIntegrationDatabase } from "./integration-setup.mjs";
+import {
+  initializeIntegrationDatabase,
+  integrationAPIEnvironment,
+} from "./integration-setup.mjs";
 import { runCommand } from "./run-command.mjs";
 import { safeChildEnvironment, sanitizeMessage } from "./runtime-policy.mjs";
 
@@ -61,7 +64,7 @@ async function main() {
 
   const binary = await buildAPI("sysap-api-integration");
   await buildWeb();
-  const api = startAPI(processes, binary, environment.SYSAP_DATABASE_URL, "test");
+  const api = startAPI(processes, binary, integrationAPIEnvironment(environment));
   const web = startWeb(processes, "start");
 
   const health = await waitForAPI("/healthz", 200);
