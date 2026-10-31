@@ -14,6 +14,7 @@ import {
   waitForWeb,
 } from "./local-runtime.mjs";
 import { initializeIntegrationDatabase } from "./integration-setup.mjs";
+import { runCommand } from "./run-command.mjs";
 import { safeChildEnvironment, sanitizeMessage } from "./runtime-policy.mjs";
 
 const database = new LocalDatabaseSession();
