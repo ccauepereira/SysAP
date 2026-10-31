@@ -259,50 +259,72 @@ export function startWeb(processes, mode = "dev") {
 
 export async function waitForAPI(pathname, expectedStatus, timeoutMilliseconds = 30_000) {
   const endpoint = new URL(pathname, apiURL);
-  return waitFor(async () => {
-    const response = await fetch(endpoint, {
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(1_000),
-    });
-    if (response.status !== expectedStatus || response.redirected) {
-      return null;
-    }
-    const text = await readLimitedText(response, 64 * 1024);
-    return { response, text };
-  }, timeoutMilliseconds);
+  return waitForLocalHTTP(endpoint, expectedStatus, timeoutMilliseconds, 64 * 1024, 1_000);
 }
 
 export async function waitForWeb(pathname, expectedStatus, timeoutMilliseconds = 45_000) {
   const endpoint = new URL(pathname, webURL);
+  return waitForLocalHTTP(endpoint, expectedStatus, timeoutMilliseconds, 2 * 1024 * 1024, 2_500);
+}
+
+export async function waitForLocalHTTP(
+  endpoint,
+  expectedStatus,
+  timeoutMilliseconds,
+  maximumBodyBytes,
+  requestTimeoutMilliseconds,
+) {
+  const target = endpoint instanceof URL ? new URL(endpoint) : new URL(endpoint);
+  if (
+    target.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname)
+  ) {
+    throw new Error("verificacao HTTP aceita somente endpoints locais em loopback");
+  }
+
   return waitFor(async () => {
-    const response = await fetch(endpoint, {
-      cache: "no-store",
-      redirect: "manual",
-      signal: AbortSignal.timeout(2_500),
-    });
-    if (response.status === expectedStatus) {
-      await readLimitedText(response, 2 * 1024 * 1024).catch(() => {});
-      return { response, text: "" };
+    let response;
+    try {
+      response = await fetch(target, {
+        cache: "no-store",
+        redirect: "manual",
+        signal: AbortSignal.timeout(requestTimeoutMilliseconds),
+      });
+    } catch {
+      return null;
     }
-    return null;
+
+    if (response.status !== expectedStatus || response.redirected) {
+      await cancelResponseBody(response.body);
+      return null;
+    }
+
+    const text = await readLimitedText(response, maximumBodyBytes);
+    return { response, text };
   }, timeoutMilliseconds);
 }
 
 async function waitFor(attempt, timeoutMilliseconds) {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
-    try {
-      const result = await attempt();
-      if (result !== null) {
-        return result;
-      }
-    } catch {
-      // A inicializacao e as transicoes de degradacao sao eventualmente consistentes.
+    const result = await attempt();
+    if (result !== null) {
+      return result;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("servico local nao atingiu o estado esperado no prazo");
+}
+
+async function cancelResponseBody(body) {
+  if (body === null) {
+    return;
+  }
+  try {
+    await body.cancel();
+  } catch {
+    // Respostas inesperadas não devem reter recursos enquanto o helper aguarda.
+  }
 }
 
 async function readLimitedText(response, maximumBytes) {

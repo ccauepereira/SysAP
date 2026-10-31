@@ -215,8 +215,11 @@ pnpm security:secrets
 `pnpm check` verifica formato Go sem reescrever, modulos, vet, testes com race,
 build da API, lint/typecheck/testes/build Web, OpenAPI e scripts. Ele nao inicia
 o banco. `test:integration` exige a stack inicialmente parada, aplica migrations
-do zero, exercita PostgreSQL real, API e Web, valida degradacao segura e limpa
-tudo mesmo em falha.
+do zero, exercita PostgreSQL real, API e Web, valida `/healthz` (200), `/readyz`
+(200 e 503 quando o banco para) e a rota pública `/login` (200), e limpa tudo
+mesmo em falha. A interface atual não expõe uma rota pública com contrato
+observável para o estado de degradação do backend; essa condição não é declarada
+como coberta pela integração Web.
 
 ## OpenAPI
 
