@@ -163,3 +163,40 @@ func TestProviders_ValidConfig(t *testing.T) {
 		t.Errorf("Expected *supabaseSessionIdentityProvider when config is present, got %T", sessionProvider)
 	}
 }
+
+func TestSupabaseMFAProvider_EnrollTOTPWithLargeSVGQRCode(t *testing.T) {
+	expectedFactorID := uuid.New()
+	expectedURI := "otpauth://totp/SysAP:owner@example.test?secret=JBSWY3DPEHPK3PXP&issuer=SysAP"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/v1/factors" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":   expectedFactorID,
+			"type": "totp",
+			"totp": map[string]any{
+				"qr_code": strings.Repeat("data:image/svg+xml;utf8,svg-data-", 11000),
+				"secret":  "JBSWY3DPEHPK3PXP",
+				"uri":     expectedURI,
+			},
+		})
+	}))
+	defer server.Close()
+
+	authAdmin, err := newSupabaseAuthAdmin(server.URL+"/auth/v1", "test-role-key", "development", server.Client())
+	if err != nil {
+		t.Fatalf("newSupabaseAuthAdmin failed: %v", err)
+	}
+	provider := &supabaseMFAProvider{auth: authAdmin}
+
+	enrollment, err := provider.EnrollTOTP(context.Background(), "bearer-token")
+	if err != nil {
+		t.Fatalf("EnrollTOTP failed for large SVG QR response: %v", err)
+	}
+	if enrollment.FactorID != expectedFactorID || enrollment.ProvisioningURI != expectedURI {
+		t.Fatalf("unexpected enrollment: %+v", enrollment)
+	}
+}

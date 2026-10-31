@@ -155,6 +155,11 @@ create policy update_pending_athlete_membership_for_activation on app.organizati
     )
   );
 
+-- Drop the legacy Phase 2B update_tenant policy on app.profiles, which reads
+-- app.organization_memberships and causes an RLS recursion cycle with
+-- organization_memberships_select_current_auth_subject during profile UPDATE.
+drop policy if exists update_tenant on app.profiles;
+
 create policy update_athlete_profile_for_activation_completion on app.profiles
   for update to sysap_api
   using (

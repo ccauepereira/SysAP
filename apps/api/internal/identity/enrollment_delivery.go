@@ -32,7 +32,7 @@ func (noOpEnrollmentDeliveryProvider) SendEnrollment(context.Context, string, st
 // EmailEnrollmentDeliveryProvider adapts the generic platform email sender to
 // the domain-specific enrollment delivery interface.
 type EmailEnrollmentDeliveryProvider struct {
-	emailProvider *email.BrevoEmailProvider
+	emailProvider email.TransactionalEmailSender
 }
 
 type enrollmentDeliveryRejected struct{ reason string }
@@ -40,7 +40,7 @@ type enrollmentDeliveryRejected struct{ reason string }
 func (e enrollmentDeliveryRejected) Error() string           { return e.reason }
 func (e enrollmentDeliveryRejected) DeliveryOutcome() string { return "failed" }
 
-func NewEmailEnrollmentDeliveryProvider(ep *email.BrevoEmailProvider) *EmailEnrollmentDeliveryProvider {
+func NewEmailEnrollmentDeliveryProvider(ep email.TransactionalEmailSender) *EmailEnrollmentDeliveryProvider {
 	return &EmailEnrollmentDeliveryProvider{emailProvider: ep}
 }
 

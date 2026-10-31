@@ -18,7 +18,7 @@ import (
 
 const (
 	authAdminTimeout  = 3 * time.Second
-	authAdminMaxBody  = 64 * 1024
+	authAdminMaxBody  = 512 * 1024
 	authAdminEndpoint = "admin/users"
 )
 

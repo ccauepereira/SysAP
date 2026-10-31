@@ -63,17 +63,21 @@ func newHandler(
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.health)
 	mux.HandleFunc("GET /readyz", handler.readiness)
-	var mfaHandler, recoveryHandler http.Handler
+	var mfaHandler, recoveryHandler, trainingGroupHandler http.Handler
 	if len(additionalHandlers) > 0 {
 		mfaHandler = additionalHandlers[0]
 	}
 	if len(additionalHandlers) > 1 {
 		recoveryHandler = additionalHandlers[1]
 	}
+	if len(additionalHandlers) > 2 {
+		trainingGroupHandler = additionalHandlers[2]
+	}
 	if activationHandler != nil {
 		mux.Handle("POST /v1/activation/start", activationHandler)
 		mux.Handle("POST /v1/activation/verify", activationHandler)
 		mux.Handle("POST /v1/activation/verify-sms", activationHandler)
+		mux.Handle("POST /v1/activation/manual/verify", activationHandler)
 		mux.Handle("POST /v1/activation/email/start", activationHandler)
 		mux.Handle("POST /v1/activation/email/verify", activationHandler)
 		mux.Handle("POST /v1/activation/complete", activationHandler)
@@ -87,17 +91,30 @@ func newHandler(
 	if recoveryHandler != nil {
 		mux.Handle("POST /v1/auth/password-recovery/start", recoveryHandler)
 		mux.Handle("POST /v1/auth/password-recovery/verify", recoveryHandler)
+		mux.Handle("POST /v1/auth/password-recovery/manual/verify", recoveryHandler)
 		mux.Handle("POST /v1/auth/password-recovery/complete", recoveryHandler)
 	}
 
 	if authMiddleware != nil {
 		if meHandler != nil {
 			mux.Handle("GET /v1/me", authMiddleware(meHandler))
+			mux.Handle("GET /v1/me/athlete", authMiddleware(meHandler))
 		}
 		if invitationHandler != nil {
+			mux.Handle("GET /v1/organizations/{organization_id}/training-groups", authMiddleware(invitationHandler))
 			mux.Handle("POST /v1/organizations/{organization_id}/athlete-invitations", authMiddleware(invitationHandler))
+			mux.Handle("GET /v1/organizations/{organization_id}/athlete-invitations", authMiddleware(invitationHandler))
 			mux.Handle("GET /v1/athlete-invitations/{invitation_id}", authMiddleware(invitationHandler))
 			mux.Handle("POST /v1/athlete-invitations/{invitation_id}/resend", authMiddleware(invitationHandler))
+		}
+		if activationHandler != nil {
+			mux.Handle("POST /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}/manual-activation", authMiddleware(activationHandler))
+		}
+		if recoveryHandler != nil {
+			mux.Handle("POST /v1/organizations/{organization_id}/athletes/{athlete_profile_id}/manual-recovery", authMiddleware(recoveryHandler))
+		}
+		if trainingGroupHandler != nil {
+			mux.Handle("POST /v1/organizations/{organization_id}/training-groups", authMiddleware(trainingGroupHandler))
 		}
 		if sessionHandler != nil {
 			mux.Handle("POST /v1/auth/logout", authMiddleware(sessionHandler))
@@ -114,7 +131,13 @@ func newHandler(
 			WriteAuthenticationRequired(w, r.Context())
 		}
 		mux.HandleFunc("GET /v1/me", notAuthFunc)
+		mux.HandleFunc("GET /v1/me/athlete", notAuthFunc)
+		mux.HandleFunc("GET /v1/organizations/{organization_id}/training-groups", notAuthFunc)
+		mux.HandleFunc("POST /v1/organizations/{organization_id}/training-groups", notAuthFunc)
 		mux.HandleFunc("POST /v1/organizations/{organization_id}/athlete-invitations", notAuthFunc)
+		mux.HandleFunc("GET /v1/organizations/{organization_id}/athlete-invitations", notAuthFunc)
+		mux.HandleFunc("POST /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}/manual-activation", notAuthFunc)
+		mux.HandleFunc("POST /v1/organizations/{organization_id}/athletes/{athlete_profile_id}/manual-recovery", notAuthFunc)
 		mux.HandleFunc("GET /v1/athlete-invitations/{invitation_id}", notAuthFunc)
 		mux.HandleFunc("POST /v1/athlete-invitations/{invitation_id}/resend", notAuthFunc)
 		mux.HandleFunc("POST /v1/auth/logout", notAuthFunc)

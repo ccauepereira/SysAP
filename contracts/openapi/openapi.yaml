@@ -161,6 +161,104 @@ paths:
           $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}/manual-activation:
+    post:
+      operationId: issueManualActivation
+      tags:
+        - Convites de atleta
+      summary: Emitir código de ativação manual
+      description: Requer owner ativo com MFA; um novo código invalida o anterior.
+      x-sysap-implementation-status: implemented
+      parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: invitation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/OrganizationContext"
+      responses:
+        "201":
+          description: Código exibido uma vez para entrega ao aluno.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_number, code, expires_at]
+                properties:
+                  enrollment_number:
+                    $ref: "#/components/schemas/EnrollmentNumber"
+                  code:
+                    $ref: "#/components/schemas/OTPInput"
+                  expires_at:
+                    type: string
+                    format: date-time
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/AccessDenied"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/organizations/{organization_id}/athletes/{athlete_profile_id}/manual-recovery:
+    post:
+      operationId: issueManualPasswordRecovery
+      tags:
+        - Convites de atleta
+      summary: Emitir código de recuperação presencial de acesso
+      description: Requer owner ativo com MFA; valida identidade presencial e invalida códigos anteriores do atleta.
+      x-sysap-implementation-status: implemented
+      parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: athlete_profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/OrganizationContext"
+      responses:
+        "201":
+          description: Código temporário de recuperação exibido apenas na resposta protegida de emissão.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_number, code, expires_at]
+                properties:
+                  enrollment_number:
+                    $ref: "#/components/schemas/EnrollmentNumber"
+                  code:
+                    $ref: "#/components/schemas/OTPInput"
+                  expires_at:
+                    type: string
+                    format: date-time
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/AccessDenied"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+        "409":
+          $ref: "#/components/responses/ResourceConflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/activation/start:
     post:
       operationId: startActivation
@@ -332,6 +430,30 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/manual/verify:
+    post:
+      operationId: verifyManualActivation
+      tags: [Convites de atleta]
+      summary: Confirmar código de ativação manual
+      description: Valida o código temporário da matrícula e emite uma prova de uso único.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivationVerifyRequest" }
+      responses:
+        "200":
+          description: Prova curta de ativação.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivationProofResponse" }
+        "401": { $ref: "#/components/responses/InvalidCredentials" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/auth/login:
     post:
       operationId: login
@@ -684,6 +806,36 @@ paths:
       description: >-
         O OTP é verificado somente pelo adaptador do Supabase Auth. O resultado
         positivo emite uma proof aleatória de uso único, persistida apenas como HMAC.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRecoveryVerifyRequest"
+      responses:
+        "200":
+          description: Proof opaca para a conclusão imediata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordRecoveryProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/auth/password-recovery/manual/verify:
+    post:
+      operationId: verifyManualPasswordRecovery
+      tags: [Autenticacao]
+      summary: Verificar código temporário de recuperação presencial
+      description: >-
+        Verifica o código de 6 dígitos gerado presencialmente pelo administrador.
+        Emite a mesma proof opaca para a conclusão por /v1/auth/password-recovery/complete.
       x-sysap-implementation-status: implemented
       security: []
       requestBody:
@@ -1395,8 +1547,8 @@ components:
           enum: [goalkeeper, defender, midfielder, forward]
         enrollment_delivery_channel:
           type: string
-          enum: [email]
-          description: "Unico canal ativo nesta homologacao."
+          enum: [email, manual]
+          description: "Canal de entrega da matrícula: e-mail ou presencial (manual)."
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
@@ -1412,6 +1564,8 @@ components:
           $ref: "#/components/schemas/UUID"
         profile_id:
           $ref: "#/components/schemas/UUID"
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
         status:
           type: string
           enum: [pending_activation, activated, expired]
@@ -1422,10 +1576,10 @@ components:
           description: Data de expiração do convite.
         delivery_channel:
           type: string
-          enum: [email, sms]
+          enum: [email, sms, manual]
         delivery_status:
           type: string
-          enum: [sending, sent, failed, unknown]
+          enum: [sending, sent, failed, unknown, not_applicable]
           description: Estado seguro da tentativa; unknown não permite reenvio automático.
     ActivationStartRequest:
       type: object

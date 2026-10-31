@@ -35,6 +35,14 @@ test("rejects a remote hostname", () => {
   assert.throws(() => validateLocalDatabaseURL(fixtureURL({ hostname: "database.example.invalid" }).href, databasePort));
 });
 
+test("rejects connection parameters that can override the local host", () => {
+  for (const key of ["host", "hostaddr", "service", "servicefile"]) {
+    const input = fixtureURL();
+    input.searchParams.set(key, "remote.example.invalid");
+    assert.throws(() => validateLocalDatabaseURL(input.href, databasePort));
+  }
+});
+
 test("rejects an incorrect port", () => {
   assert.throws(() => validateLocalDatabaseURL(fixtureURL({ port: "54323" }).href, databasePort));
 });

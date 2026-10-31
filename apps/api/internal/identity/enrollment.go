@@ -22,8 +22,16 @@ func NewEnrollmentGenerator(clock func() time.Time) *DefaultEnrollmentGenerator 
 	return &DefaultEnrollmentGenerator{clock: clock}
 }
 
+var fortalezaLocation = func() *time.Location {
+	loc, err := time.LoadLocation("America/Fortaleza")
+	if err != nil {
+		return time.FixedZone("America/Fortaleza", -3*60*60)
+	}
+	return loc
+}()
+
 func (g *DefaultEnrollmentGenerator) Generate() (string, error) {
-	year := g.clock().UTC().Year()
+	year := g.clock().In(fortalezaLocation).Year()
 
 	max := big.NewInt(1000000)
 	n, err := rand.Int(rand.Reader, max)

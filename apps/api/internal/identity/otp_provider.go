@@ -23,6 +23,10 @@ type ChannelOTPProvider interface {
 	VerifyChannel(ctx context.Context, channel, destination, code string) error
 }
 
+type channelAvailability interface {
+	SupportsChannel(channel string) bool
+}
+
 type localOTPProvider struct {
 	hook func() (string, error)
 }
@@ -31,6 +35,8 @@ type localOTPProvider struct {
 // development-only local code generator. Production delivery is configured in
 // Supabase Auth, outside the API and this repository.
 type unavailableOTPProvider struct{}
+
+func (unavailableOTPProvider) SupportsChannel(string) bool { return false }
 
 func (unavailableOTPProvider) IsExternal() bool { return true }
 func (unavailableOTPProvider) NewCode() (string, error) {
@@ -43,7 +49,10 @@ func (unavailableOTPProvider) Verify(context.Context, string, string) error {
 	return errors.New("provider_error")
 }
 
-func (p localOTPProvider) IsExternal() bool                                     { return false }
+func (p localOTPProvider) IsExternal() bool { return false }
+func (p localOTPProvider) SupportsChannel(channel string) bool {
+	return channel == "sms" || channel == "email"
+}
 func (p localOTPProvider) Start(ctx context.Context, phone, code string) error  { return nil }
 func (p localOTPProvider) Verify(ctx context.Context, phone, code string) error { return nil }
 func (p localOTPProvider) NewCode() (string, error) {
@@ -83,11 +92,15 @@ func verifyChannelOTP(ctx context.Context, provider OTPProvider, channel, destin
 
 // EmailOTPProvider implements OTPProvider for email using the generic email provider
 type EmailOTPProvider struct {
-	emailProvider *email.BrevoEmailProvider
+	emailProvider email.TransactionalEmailSender
 }
 
-func NewEmailOTPProvider(ep *email.BrevoEmailProvider) *EmailOTPProvider {
+func NewEmailOTPProvider(ep email.TransactionalEmailSender) *EmailOTPProvider {
 	return &EmailOTPProvider{emailProvider: ep}
+}
+
+func (p *EmailOTPProvider) SupportsChannel(channel string) bool {
+	return p != nil && p.emailProvider != nil && channel == "email"
 }
 
 func (p *EmailOTPProvider) IsExternal() bool {
@@ -106,16 +119,19 @@ func (p *EmailOTPProvider) NewCode() (string, error) {
 }
 
 func (p *EmailOTPProvider) Start(ctx context.Context, phone, code string) error {
-	return nil // SMS not supported natively by this provider, handled by SMS if any
+	return errors.New("unsupported_channel")
 }
 
 func (p *EmailOTPProvider) Verify(ctx context.Context, phone, code string) error {
-	return nil // Handled locally
+	return errors.New("unsupported_channel")
 }
 
 func (p *EmailOTPProvider) StartChannel(ctx context.Context, channel, destination, code string) error {
-	if channel != "email" && channel != "sms" {
+	if channel != "email" {
 		return errors.New("unsupported_channel")
+	}
+	if p == nil || p.emailProvider == nil {
+		return errors.New("provider_error")
 	}
 
 	htmlContent := fmt.Sprintf(`
@@ -134,9 +150,15 @@ func (p *EmailOTPProvider) StartChannel(ctx context.Context, channel, destinatio
 		HTML:    htmlContent,
 	}
 
-	return p.emailProvider.Send(ctx, msg)
+	if err := p.emailProvider.Send(ctx, msg); err != nil {
+		return errors.New("provider_error")
+	}
+	return nil
 }
 
 func (p *EmailOTPProvider) VerifyChannel(ctx context.Context, channel, destination, code string) error {
+	if channel != "email" {
+		return errors.New("unsupported_channel")
+	}
 	return nil // Handled locally by DB verification
 }

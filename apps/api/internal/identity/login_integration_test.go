@@ -121,21 +121,22 @@ func TestLoginIntegration(t *testing.T) {
 		})
 	}
 
-	t.Run("five failures allow provider checks, sixth is blocked, and expiry resets the window", func(t *testing.T) {
+	t.Run("two failures allow provider checks, third is blocked, and expiry resets the window", func(t *testing.T) {
 		fixture := createLoginFixture(t, admin, ctx, "athlete", "active", "active", false)
 		defer fixture.remove(t, admin, ctx)
 		provider := &loginProviderStub{err: errLoginDenied}
 		handler := newLoginHandler(pool, []byte("12345678901234567890123456789012"), provider, now)
-		for attempt := 0; attempt < loginMaxFailures; attempt++ {
+		providerAttemptLimit := loginMaxFailures - 1
+		for attempt := 0; attempt < providerAttemptLimit; attempt++ {
 			assertInvalidCredentials(t, loginRequestForTest(handler, fixture.enrollment, "fixture-password", "127.0.0.1:1005"))
 		}
 		assertInvalidCredentials(t, loginRequestForTest(handler, fixture.enrollment, "fixture-password", "127.0.0.1:1005"))
-		if provider.calls.Load() != loginMaxFailures {
-			t.Fatalf("provider calls = %d, want %d", provider.calls.Load(), loginMaxFailures)
+		if provider.calls.Load() != int32(providerAttemptLimit) {
+			t.Fatalf("provider calls = %d, want %d", provider.calls.Load(), providerAttemptLimit)
 		}
 		clock = clock.Add(loginBlockPeriod + time.Second)
 		assertInvalidCredentials(t, loginRequestForTest(handler, fixture.enrollment, "fixture-password", "127.0.0.1:1005"))
-		if provider.calls.Load() != loginMaxFailures+1 {
+		if provider.calls.Load() != int32(providerAttemptLimit+1) {
 			t.Fatal("expired block did not permit a new provider check")
 		}
 	})
@@ -146,7 +147,7 @@ func TestLoginIntegration(t *testing.T) {
 		provider := &loginProviderStub{err: errLoginDenied}
 		handler := newLoginHandler(pool, []byte("12345678901234567890123456789012"), provider, now)
 		var group sync.WaitGroup
-		for attempt := 0; attempt < loginMaxFailures+1; attempt++ {
+		for attempt := 0; attempt < loginMaxFailures; attempt++ {
 			group.Add(1)
 			go func() {
 				defer group.Done()
@@ -154,8 +155,8 @@ func TestLoginIntegration(t *testing.T) {
 			}()
 		}
 		group.Wait()
-		if provider.calls.Load() != loginMaxFailures {
-			t.Fatalf("provider calls = %d, want %d", provider.calls.Load(), loginMaxFailures)
+		if provider.calls.Load() != int32(loginMaxFailures-1) {
+			t.Fatalf("provider calls = %d, want %d", provider.calls.Load(), loginMaxFailures-1)
 		}
 	})
 

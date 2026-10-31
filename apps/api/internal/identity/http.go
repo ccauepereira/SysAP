@@ -61,6 +61,10 @@ func NewMeHandler(databasePool *database.Pool, logger *slog.Logger) http.Handler
 }
 
 func (h *meHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/me/athlete" {
+		h.serveAthleteSelf(w, r)
+		return
+	}
 	ctx := r.Context()
 	authenticated, ok := auth.AuthenticatedContextFromContext(ctx)
 	if !ok {

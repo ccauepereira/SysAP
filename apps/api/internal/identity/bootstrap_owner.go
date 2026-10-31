@@ -12,6 +12,7 @@ import (
 	"github.com/ccauepereira/SysAP/apps/api/internal/platform/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -90,12 +91,6 @@ func BootstrapOwner(
 			return errors.New("owner_already_exists")
 		}
 
-		// Generate enrollment number
-		enrollment, err = generator.Generate()
-		if err != nil {
-			return fmt.Errorf("failed to generate enrollment: %w", err)
-		}
-
 		// Create Auth user in Supabase Auth
 		authUserID, err = authAdmin.CreateUserWithEmail(ctx, params.Email, params.Phone, params.Password)
 		if err != nil {
@@ -135,13 +130,48 @@ func BootstrapOwner(
 			return fmt.Errorf("failed to insert membership: %w", err)
 		}
 
-		// Insert Login Enrollment
-		_, err = tx.Exec(ctx, `
-			insert into app.login_enrollments (enrollment_number, profile_id, organization_id, created_at)
-			values ($1, $2, $3, $4)
-		`, enrollment, profileID, orgID, nowUTC)
-		if err != nil {
-			return fmt.Errorf("failed to insert login enrollment: %w", err)
+		// Insert Login Enrollment with collision recovery across tables
+		insertedEnrollment := false
+		for attempt := 0; attempt < 5; attempt++ {
+			enrollment, err = generator.Generate()
+			if err != nil {
+				return fmt.Errorf("failed to generate enrollment: %w", err)
+			}
+
+			var existsElsewhere bool
+			err = tx.QueryRow(ctx, `
+				select exists (select 1 from app.athlete_profiles where enrollment_number = $1)
+				    or exists (select 1 from app.athletes where enrollment_number = $1)
+			`, enrollment).Scan(&existsElsewhere)
+			if err != nil {
+				return fmt.Errorf("failed to check enrollment uniqueness: %w", err)
+			}
+			if existsElsewhere {
+				continue
+			}
+
+			if _, err := tx.Exec(ctx, "savepoint sp_owner_enrollment"); err != nil {
+				return fmt.Errorf("failed to create savepoint: %w", err)
+			}
+			_, err = tx.Exec(ctx, `
+				insert into app.login_enrollments (enrollment_number, profile_id, organization_id, created_at)
+				values ($1, $2, $3, $4)
+			`, enrollment, profileID, orgID, nowUTC)
+			if err != nil {
+				_, _ = tx.Exec(ctx, "rollback to savepoint sp_owner_enrollment")
+				_, _ = tx.Exec(ctx, "release savepoint sp_owner_enrollment")
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+					continue
+				}
+				return fmt.Errorf("failed to insert login enrollment: %w", err)
+			}
+			_, _ = tx.Exec(ctx, "release savepoint sp_owner_enrollment")
+			insertedEnrollment = true
+			break
+		}
+		if !insertedEnrollment {
+			return errors.New("failed to generate unique login enrollment")
 		}
 
 		return nil

@@ -80,15 +80,37 @@ func environmentAuthConfiguration() (string, string) {
 func environmentName() string { return os.Getenv("SYSAP_ENV") }
 
 func (p *supabaseMFAProvider) EnrollTOTP(ctx context.Context, bearer string) (MFAEnrollment, error) {
+	payload, _ := json.Marshal(struct {
+		FactorType   string `json:"factor_type"`
+		FriendlyName string `json:"friendly_name"`
+	}{
+		FactorType:   "totp",
+		FriendlyName: "sysap-" + uuid.NewString()[:8],
+	})
 	var response struct {
-		ID   uuid.UUID `json:"id"`
-		URI  string    `json:"uri"`
-		Type string    `json:"factor_type"`
+		ID         uuid.UUID `json:"id"`
+		URI        string    `json:"uri"`
+		FactorType string    `json:"factor_type"`
+		Type       string    `json:"type"`
+		TOTP       struct {
+			URI string `json:"uri"`
+		} `json:"totp"`
 	}
-	if err := p.userJSON(ctx, http.MethodPost, "factors", bearer, []byte(`{"factor_type":"totp"}`), &response); err != nil || response.ID == uuid.Nil || response.URI == "" || response.Type != "" && response.Type != "totp" {
+	if err := p.userJSON(ctx, http.MethodPost, "factors", bearer, payload, &response); err != nil {
 		return MFAEnrollment{}, errAuthUnavailable
 	}
-	return MFAEnrollment{FactorID: response.ID, ProvisioningURI: response.URI}, nil
+	uri := response.URI
+	if uri == "" {
+		uri = response.TOTP.URI
+	}
+	factorType := response.FactorType
+	if factorType == "" {
+		factorType = response.Type
+	}
+	if response.ID == uuid.Nil || uri == "" || (factorType != "" && factorType != "totp") {
+		return MFAEnrollment{}, errAuthUnavailable
+	}
+	return MFAEnrollment{FactorID: response.ID, ProvisioningURI: uri}, nil
 }
 
 func (p *supabaseMFAProvider) CreateChallenge(ctx context.Context, bearer string, factorID uuid.UUID) (string, error) {
@@ -134,8 +156,13 @@ func (p *supabaseMFAProvider) FactorActive(ctx context.Context, bearer string, f
 			Status string    `json:"status"`
 		} `json:"factors"`
 	}
-	if factorID == uuid.Nil || p.userJSON(ctx, http.MethodGet, "factors", bearer, nil, &response) != nil {
+	if factorID == uuid.Nil {
 		return false, errAuthUnavailable
+	}
+	if p.userJSON(ctx, http.MethodGet, "user", bearer, nil, &response) != nil {
+		if p.userJSON(ctx, http.MethodGet, "factors", bearer, nil, &response) != nil {
+			return false, errAuthUnavailable
+		}
 	}
 	for _, factor := range response.Factors {
 		if factor.ID == factorID && factor.Status == "verified" {
@@ -281,7 +308,7 @@ func (h *mfaHandler) verify(w http.ResponseWriter, r *http.Request) {
 		writeMFAInvalid(w, r)
 		return
 	}
-	if !h.ownsPendingFactor(r.Context(), authenticated, request.FactorID) {
+	if !h.ownsUsableFactor(r.Context(), authenticated, request.FactorID) {
 		writeMFAInvalid(w, r)
 		return
 	}
@@ -291,8 +318,8 @@ func (h *mfaHandler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = h.withMFAFlow(r.Context(), authenticated, func(tx pgx.Tx) error {
-		command, err := tx.Exec(r.Context(), `update app.mfa_factors set status = 'verified', verified_at = now(), updated_at = now()
-			where profile_id = $1 and provider_factor_id = $2 and status = 'pending'`, authenticated.ProfileID, request.FactorID)
+		command, err := tx.Exec(r.Context(), `update app.mfa_factors set status = 'verified', verified_at = coalesce(verified_at, now()), updated_at = now()
+			where profile_id = $1 and provider_factor_id = $2 and status in ('pending', 'verified')`, authenticated.ProfileID, request.FactorID)
 		if err != nil || command.RowsAffected() != 1 {
 			return errLoginDenied
 		}
@@ -334,13 +361,17 @@ func (h *mfaHandler) status(w http.ResponseWriter, r *http.Request) {
 		writeMFASafeUnavailable(w, r)
 		return
 	}
-	if !active && status != "disabled" {
+	if !active && status == "verified" {
 		_ = h.withMFAFlow(r.Context(), authenticated, func(tx pgx.Tx) error {
 			_, e := tx.Exec(r.Context(), "update app.mfa_factors set status = 'disabled', disabled_at = now(), updated_at = now() where profile_id = $1 and status <> 'disabled'", authenticated.ProfileID)
 			return e
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"mfa_enabled": active})
+	if active {
+		writeJSON(w, http.StatusOK, map[string]any{"mfa_enabled": true, "factor_id": factorID})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"mfa_enabled": false})
 }
 
 func (h *mfaHandler) withMFAFlow(ctx context.Context, authenticated auth.AuthenticatedContext, action func(pgx.Tx) error) error {
@@ -554,11 +585,17 @@ func newPasswordRecoveryHandler(pool *database.Pool, provider RecoveryProvider, 
 	return &recoveryHandler{database: pool, provider: provider, pepper: pepper, now: now}
 }
 func (h *recoveryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("athlete_profile_id") != "" {
+		h.issueManualRecovery(w, r)
+		return
+	}
 	switch r.URL.Path {
 	case "/v1/auth/password-recovery/start":
 		h.start(w, r)
 	case "/v1/auth/password-recovery/verify":
 		h.verify(w, r)
+	case "/v1/auth/password-recovery/manual/verify":
+		h.verifyManualRecovery(w, r)
 	case "/v1/auth/password-recovery/complete":
 		h.complete(w, r)
 	default:
@@ -633,10 +670,11 @@ func (h *recoveryHandler) complete(w http.ResponseWriter, r *http.Request) {
 	digest := recoveryDigest(h.pepper, request.Proof)
 	var challengeID uuid.UUID
 	var profileID uuid.UUID
+	var authUserID uuid.UUID
 	var role string
 	var mfaEnabled bool
 	err := h.withRecoveryFlow(r.Context(), func(tx pgx.Tx) error {
-		return tx.QueryRow(r.Context(), `select challenge.id, challenge.profile_id, membership.role, exists (select 1 from app.mfa_factors factor where factor.profile_id = challenge.profile_id and factor.status = 'verified') from app.password_recovery_challenges challenge join app.organization_memberships membership on membership.profile_id = challenge.profile_id and membership.organization_id = challenge.organization_id and membership.status = 'active' where challenge.proof_digest = $1 and challenge.used_at is null and challenge.expires_at > now() limit 1 for update of challenge`, digest).Scan(&challengeID, &profileID, &role, &mfaEnabled)
+		return tx.QueryRow(r.Context(), `select challenge.id, challenge.profile_id, profile.auth_user_id, membership.role, exists (select 1 from app.mfa_factors factor where factor.profile_id = challenge.profile_id and factor.status = 'verified') from app.password_recovery_challenges challenge join app.profiles profile on profile.id = challenge.profile_id join app.organization_memberships membership on membership.profile_id = challenge.profile_id and membership.organization_id = challenge.organization_id and membership.status = 'active' where challenge.proof_digest = $1 and challenge.used_at is null and challenge.expires_at > now() limit 1 for update of challenge`, digest).Scan(&challengeID, &profileID, &authUserID, &role, &mfaEnabled)
 	})
 	if err != nil {
 		writeRecoveryInvalid(w, r)
@@ -659,7 +697,7 @@ func (h *recoveryHandler) complete(w http.ResponseWriter, r *http.Request) {
 		writeRecoveryInvalid(w, r)
 		return
 	}
-	if h.provider == nil || h.provider.SetPassword(r.Context(), profileID, request.Password) != nil {
+	if h.provider == nil || h.provider.SetPassword(r.Context(), authUserID, request.Password) != nil {
 		_ = h.withRecoveryFlow(r.Context(), func(tx pgx.Tx) error {
 			_, e := tx.Exec(r.Context(), "update app.password_recovery_challenges set completing_at = null where id = $1 and used_at is null", challengeID)
 			return e

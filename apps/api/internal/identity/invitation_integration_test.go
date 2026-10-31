@@ -29,10 +29,14 @@ type testEnrollmentGenerator struct {
 	counter int
 }
 
-type recordingEnrollmentDelivery struct{ calls int }
+type recordingEnrollmentDelivery struct {
+	calls      int
+	enrollment string
+}
 
-func (p *recordingEnrollmentDelivery) SendEnrollment(context.Context, string, string, string) error {
+func (p *recordingEnrollmentDelivery) SendEnrollment(_ context.Context, _, _, enrollment string) error {
 	p.calls++
+	p.enrollment = enrollment
 	return nil
 }
 
@@ -46,6 +50,13 @@ type knownDeliveryFailure struct{}
 
 func (knownDeliveryFailure) Error() string           { return "safe fake delivery rejection" }
 func (knownDeliveryFailure) DeliveryOutcome() string { return "failed" }
+
+type countingFailedEnrollmentDelivery struct{ calls int }
+
+func (p *countingFailedEnrollmentDelivery) SendEnrollment(context.Context, string, string, string) error {
+	p.calls++
+	return knownDeliveryFailure{}
+}
 
 func TestInvitationDeliveryFailureKeepsPendingAccount(t *testing.T) {
 	pool, teardown, orgID, profileOwner, _, _, ownerAuthID, _, _, trainingGroupID := setupInvitationIntegrationTest(t)
@@ -133,6 +144,93 @@ func TestInvitationMembershipRLSRejectsUninvitedActiveInsert(t *testing.T) {
 	}
 }
 
+func TestInvitationResendUsesFakeDeliveryAndRetryPolicy(t *testing.T) {
+	pool, teardown, orgID, profileOwner, _, _, ownerAuthID, _, _, trainingGroupID := setupInvitationIntegrationTest(t)
+	defer teardown()
+
+	clock := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	delivery := &countingFailedEnrollmentDelivery{}
+	handler := identity.NewInvitationHandlerWithDelivery(pool, slog.Default(), func() time.Time { return clock }, &testEnrollmentGenerator{}, delivery)
+	authContext := auth.AuthenticatedContext{SubjectID: ownerAuthID, ProfileID: profileOwner, SessionID: uuid.New(), AAL: auth.AAL2}
+	middleware := auth.Middleware(&stubTokenVerifier{token: auth.VerifiedToken{}}, &stubSessionResolver{context: authContext})
+
+	body, _ := json.Marshal(map[string]string{
+		"full_name": "Resend Fixture Athlete", "phone_e164": "+15555550124", "email": "resend@example.test",
+		"birth_date": "2010-01-15", "locality": "Fictional City", "team_id": trainingGroupID.String(),
+		"football_position": "midfielder", "enrollment_delivery_channel": "email",
+	})
+	create := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+orgID.String()+"/athlete-invitations", bytes.NewReader(body))
+	create.SetPathValue("organization_id", orgID.String())
+	create.Header.Set("X-Organization-ID", orgID.String())
+	create.Header.Set("Authorization", "Bearer fake")
+	create.Header.Set("Idempotency-Key", uuid.NewString())
+	created := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var invitation struct {
+		InvitationID uuid.UUID `json:"invitation_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &invitation); err != nil || invitation.InvitationID == uuid.Nil {
+		t.Fatalf("create response did not contain invitation_id: %s", created.Body.String())
+	}
+	if delivery.calls != 1 {
+		t.Fatalf("initial fake delivery calls = %d, want 1", delivery.calls)
+	}
+
+	clock = clock.Add(61 * time.Second)
+	resend := httptest.NewRequest(http.MethodPost, "/v1/athlete-invitations/"+invitation.InvitationID.String()+"/resend", nil)
+	resend.SetPathValue("invitation_id", invitation.InvitationID.String())
+	resend.Header.Set("X-Organization-ID", orgID.String())
+	resend.Header.Set("Authorization", "Bearer fake")
+	resend.Header.Set("Idempotency-Key", uuid.NewString())
+	resent := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(resent, resend)
+	if resent.Code != http.StatusAccepted {
+		t.Fatalf("resend status = %d, body = %s", resent.Code, resent.Body.String())
+	}
+	if delivery.calls != 2 {
+		t.Fatalf("resend fake delivery calls = %d, want 2", delivery.calls)
+	}
+	var deliveryStatus string
+	adminPool, err := pgxpool.New(context.Background(), os.Getenv("SYSAP_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminPool.Close()
+	if err := adminPool.QueryRow(context.Background(), "select delivery_status from app.activation_invitations where id=$1", invitation.InvitationID).Scan(&deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if deliveryStatus != "failed" {
+		t.Fatalf("delivery_status = %q, want failed", deliveryStatus)
+	}
+
+	// Replaying the same key is idempotent and must not call the provider again.
+	replay := httptest.NewRequest(http.MethodPost, "/v1/athlete-invitations/"+invitation.InvitationID.String()+"/resend", nil)
+	replay.SetPathValue("invitation_id", invitation.InvitationID.String())
+	replay.Header.Set("X-Organization-ID", orgID.String())
+	replay.Header.Set("Authorization", "Bearer fake")
+	replay.Header.Set("Idempotency-Key", resend.Header.Get("Idempotency-Key"))
+	replayed := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(replayed, replay)
+	if replayed.Code != http.StatusAccepted || delivery.calls != 2 {
+		t.Fatalf("idempotent replay status=%d calls=%d; want 202 and 2 calls", replayed.Code, delivery.calls)
+	}
+
+	// A new key inside the cooldown is rejected without a provider attempt.
+	limited := httptest.NewRequest(http.MethodPost, "/v1/athlete-invitations/"+invitation.InvitationID.String()+"/resend", nil)
+	limited.SetPathValue("invitation_id", invitation.InvitationID.String())
+	limited.Header.Set("X-Organization-ID", orgID.String())
+	limited.Header.Set("Authorization", "Bearer fake")
+	limited.Header.Set("Idempotency-Key", uuid.NewString())
+	limitedResponse := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(limitedResponse, limited)
+	if limitedResponse.Code != http.StatusTooManyRequests || delivery.calls != 2 {
+		t.Fatalf("cooldown status=%d calls=%d; want 429 and 2 calls", limitedResponse.Code, delivery.calls)
+	}
+}
+
 func (g *testEnrollmentGenerator) Generate() (string, error) {
 	g.counter++
 	return "2026" + "00000" + string(rune('0'+g.counter)), nil
@@ -197,17 +295,22 @@ func setupInvitationIntegrationTest(t *testing.T) (*database.Pool, func(), uuid.
 	}
 
 	teardown := func() {
-		adminPool.Exec(ctx, "delete from app.training_group_athletes")
-		adminPool.Exec(ctx, "delete from app.idempotency_records")
-		adminPool.Exec(ctx, "delete from app.security_audit_events")
-		adminPool.Exec(ctx, "delete from app.mfa_factors")
-		adminPool.Exec(ctx, "delete from app.activation_invitations")
-		adminPool.Exec(ctx, "delete from app.athlete_profiles")
-		adminPool.Exec(ctx, "delete from app.training_groups")
-		adminPool.Exec(ctx, "delete from app.organization_memberships")
-		adminPool.Exec(ctx, "delete from app.profiles")
-		adminPool.Exec(ctx, "delete from app.organizations")
-		adminPool.Exec(ctx, "delete from auth.users where id = any($1::uuid[])", []uuid.UUID{ownerAuthID, trainerAuthID, athleteAuthID})
+		if tx, err := adminPool.Begin(ctx); err == nil {
+			_, _ = tx.Exec(ctx, "set local session_replication_role = replica")
+			_, _ = tx.Exec(ctx, "delete from app.training_group_athletes where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.idempotency_records where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.security_audit_events where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.mfa_factors where profile_id = any($1::uuid[])", []uuid.UUID{profileOwner, profileTrainer, profileAthlete})
+			_, _ = tx.Exec(ctx, "delete from app.profiles where id in (select profile_id from app.activation_invitations where organization_id = $1)", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.activation_invitations where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.athlete_profiles where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.training_groups where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.organization_memberships where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.profiles where id = any($1::uuid[])", []uuid.UUID{profileOwner, profileTrainer, profileAthlete})
+			_, _ = tx.Exec(ctx, "delete from app.organizations where id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from auth.users where id = any($1::uuid[])", []uuid.UUID{ownerAuthID, trainerAuthID, athleteAuthID})
+			_ = tx.Commit(ctx)
+		}
 		adminPool.Close()
 		pool.Close()
 	}
@@ -467,6 +570,92 @@ func TestCreateAthleteInvitation(t *testing.T) {
 
 		if rr.Code != http.StatusForbidden {
 			t.Fatalf("expected 403 Forbidden for cross organization access, got %d", rr.Code)
+		}
+	})
+
+	t.Run("recovers from enrollment collision without aborting transaction", func(t *testing.T) {
+		// Reset counter to 0 so the first generated enrollment ("2026000001") collides with the first test's athlete_profiles row!
+		enrollGen.counter = 0
+		reqBody := map[string]string{
+			"full_name":                   "Collision Recovery Athlete",
+			"phone_e164":                  "+5511999999996",
+			"email":                       "collision@example.test",
+			"birth_date":                  "2010-01-15",
+			"locality":                    "Fictional City",
+			"team_id":                     trainingGroupID.String(),
+			"football_position":           "midfielder",
+			"enrollment_delivery_channel": "email",
+		}
+		b, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/organizations/"+orgID.String()+"/athlete-invitations", bytes.NewReader(b))
+		req.SetPathValue("organization_id", orgID.String())
+		req.Header.Set("X-Organization-ID", orgID.String())
+		req.Header.Set("Idempotency-Key", uuid.New().String())
+		req.Header.Set("Authorization", "Bearer stub")
+
+		authCtx := auth.AuthenticatedContext{
+			SubjectID: ownerAuthID,
+			ProfileID: profileOwner,
+			SessionID: uuid.New(),
+			AAL:       auth.AAL2,
+		}
+		middleware := auth.Middleware(&stubTokenVerifier{token: auth.VerifiedToken{}}, &stubSessionResolver{context: authCtx})
+		rr := httptest.NewRecorder()
+		middleware(handler).ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created after enrollment collision recovery, got %d: %s", rr.Code, rr.Body.String())
+		}
+		if delivery.enrollment != "2026000002" {
+			t.Fatalf("expected recovered enrollment 2026000002, got %s", delivery.enrollment)
+		}
+	})
+
+	t.Run("lists active training groups for owner and denies athlete", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+orgID.String()+"/training-groups", nil)
+		req.SetPathValue("organization_id", orgID.String())
+		req.Header.Set("X-Organization-ID", orgID.String())
+		req.Header.Set("Authorization", "Bearer stub")
+
+		ownerCtx := auth.AuthenticatedContext{
+			SubjectID: ownerAuthID,
+			ProfileID: profileOwner,
+			SessionID: uuid.New(),
+			AAL:       auth.AAL1,
+		}
+		ownerMiddleware := auth.Middleware(&stubTokenVerifier{token: auth.VerifiedToken{}}, &stubSessionResolver{context: ownerCtx})
+		rr := httptest.NewRecorder()
+		ownerMiddleware(handler).ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for owner listing training groups, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var listResp struct {
+			Items []struct {
+				ID   uuid.UUID `json:"id"`
+				Name string    `json:"name"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &listResp); err != nil || len(listResp.Items) != 1 || listResp.Items[0].ID != trainingGroupID {
+			t.Fatalf("unexpected training groups response: %s", rr.Body.String())
+		}
+
+		athleteReq := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+orgID.String()+"/training-groups", nil)
+		athleteReq.SetPathValue("organization_id", orgID.String())
+		athleteReq.Header.Set("X-Organization-ID", orgID.String())
+		athleteReq.Header.Set("Authorization", "Bearer stub")
+		athleteCtx := auth.AuthenticatedContext{
+			SubjectID: athleteAuthID,
+			ProfileID: profileAthlete,
+			SessionID: uuid.New(),
+			AAL:       auth.AAL1,
+		}
+		athleteMiddleware := auth.Middleware(&stubTokenVerifier{token: auth.VerifiedToken{}}, &stubSessionResolver{context: athleteCtx})
+		athleteRR := httptest.NewRecorder()
+		athleteMiddleware(handler).ServeHTTP(athleteRR, athleteReq)
+		if athleteRR.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 Forbidden for athlete listing training groups, got %d", athleteRR.Code)
 		}
 	})
 }

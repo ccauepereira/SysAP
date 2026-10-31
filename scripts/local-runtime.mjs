@@ -4,7 +4,7 @@ import net from "node:net";
 import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-import { readDatabasePort } from "./local-database-url.mjs";
+import { readDatabasePort, readLocalSmtpPort } from "./local-database-url.mjs";
 import { runCommand, runCommandCapture } from "./run-command.mjs";
 import {
   canTerminateOwnedChild,
@@ -98,7 +98,6 @@ export class LocalDatabaseSession {
   }
 
   async environment() {
-    await runCommand("pnpm", ["db:env"], { cwd: repositoryRoot, env: process.env });
     const port = readDatabasePort(path.join(repositoryRoot, "infra", "supabase", "config.toml"));
     return readLocalEnvironment(path.join(repositoryRoot, ".env.local"), port);
   }
@@ -230,6 +229,7 @@ export function startAPI(processes, binaryPath, localEnvironment = {}) {
     cwd: apiDirectory,
     label: "API",
     env: safeChildEnvironment({
+      ...localEnvironment,
       SYSAP_ENV: "development",
       SYSAP_HTTP_ADDR: "127.0.0.1:8080",
       SYSAP_SHUTDOWN_TIMEOUT: "10s",
@@ -237,7 +237,9 @@ export function startAPI(processes, binaryPath, localEnvironment = {}) {
       SYSAP_LOGIN_RATE_LIMIT_SECRET: "local-dev-login-rate-limit-secret-pad",
       SYSAP_OTP_PEPPER: "local-dev-otp-pepper-secret-pad-pad-pad",
       SYSAP_PASSWORD_RECOVERY_PEPPER: "local-dev-password-recovery-pepper-pad",
-      ...localEnvironment,
+      SYSAP_EMAIL_PROVIDER_BREVO_KEY: "",
+      SYSAP_SMTP_HOST: "127.0.0.1",
+      SYSAP_SMTP_PORT: String(readLocalSmtpPort(path.join(repositoryRoot, "infra", "supabase", "config.toml"))),
     }),
   });
 }
@@ -250,6 +252,7 @@ export function startWeb(processes, mode = "dev") {
     env: safeChildEnvironment({
       NODE_ENV: mode === "start" ? "production" : "development",
       SYSAP_API_BASE_URL: apiURL,
+      SYSAP_WEB_ORIGIN: webURL,
     }),
   });
 }
