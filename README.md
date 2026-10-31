@@ -6,10 +6,43 @@ explicavel, sem atribuir aos dispositivos medidas que eles nao produzem.
 
 ## Estado atual
 
-A Fase 1 entrega uma fundacao tecnica executavel: PostgreSQL/Supabase local,
-API Go com saude e prontidao, dashboard Next.js responsivo, contrato OpenAPI e
-gates locais/CI. O dashboard ainda usa dados demonstrativos e suas acoes de
-negocio permanecem desabilitadas. Nao ha autenticacao nem cadastro real.
+O SysAP encontra-se na **Fase 1 — Fundação, Identidade e Acesso**, com a fundação técnica e o fluxo completo de identidade e acesso substancialmente concluídos:
+PostgreSQL/Supabase local (Auth, banco com RLS forcada e caixa de e-mail de
+testes local), API Go em monolito modular, painel e rotas de autenticacao em
+Next.js, contrato OpenAPI e gates locais/CI. O usuário reportou a homologação manual do fluxo principal (MFA administrativo, turma, cadastro, ativação e acesso do atleta). A recuperação presencial de senha ainda não foi homologada manualmente; os testes automatizados de banco dependem de uma instância isolada.
+
+Funcionalidades disponiveis localmente:
+- Provisionamento administrativo inicial (`pnpm bootstrap:owner`) de organizacao
+  e proprietario (`owner`) em ambiente local;
+- Login por matricula de 10 digitos e senha (`POST /v1/auth/login`), sessao
+  controlada por cookies `HttpOnly`, renovacao (`POST /v1/auth/refresh`) e
+  encerramento de sessao (`POST /v1/auth/logout` e `POST /v1/auth/logout-all`);
+- Elevacao de sessao administrativa a `AAL2` via TOTP (`GET /v1/auth/mfa`,
+  `POST /v1/auth/mfa/enroll`, `POST /v1/auth/mfa/challenge`,
+  `POST /v1/auth/mfa/verify`);
+- Criacao e listagem de turmas ativas da organizacao
+  (`POST /v1/organizations/{organization_id}/training-groups` e
+  `GET /v1/organizations/{organization_id}/training-groups`);
+- Cadastro administrativo de atleta com geracao de matricula no fuso
+  `America/Fortaleza`, persistencia atomica antes do envio, entrega de matricula
+  para a caixa de e-mail local e reenvio controlado
+  (`POST /v1/organizations/{organization_id}/athlete-invitations`,
+  `GET /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}`,
+  `POST /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}/resend`);
+- Ativacao de conta de atleta por OTP e definicao de senha
+  (`POST /v1/activation/start`, `POST /v1/activation/verify`,
+  `POST /v1/activation/complete`);
+- Recuperacao de senha sem enumeracao de contas e com revogacao de sessoes
+  (`POST /v1/auth/password-recovery/start`,
+  `POST /v1/auth/password-recovery/verify`,
+  `POST /v1/auth/password-recovery/complete`);
+- Consulta de identidade e vinculos autorizados (`GET /v1/me`).
+
+O cadastro e a listagem de atletas, o perfil autenticado do atleta e a criação
+de turmas usam a API. Chamada/presença e operações financeiras ainda não têm
+contrato/backend disponível e permanecem indisponíveis. A demonstração local,
+quando habilitada explicitamente em desenvolvimento, usa estado fictício e não
+substitui os fluxos reais.
 
 ```mermaid
 flowchart LR
@@ -64,6 +97,12 @@ origem e conteudo do pacote.
 
 ## Execucao local integrada
 
+**Homologação manual reportada:** o percurso principal em duas sessões foi
+concluído pelo usuário. A recuperação presencial de senha ainda não tem
+confirmação manual. Os testes de integração PostgreSQL/Supabase não são
+considerados aprovados sem instância descartável isolada. Não execute
+`db:reset` sobre um banco com dados que devam ser preservados.
+
 ```sh
 pnpm dev
 ```
@@ -116,19 +155,50 @@ pnpm db:stop
 um ambiente com dados que precisem ser preservados. O schema `app` e privado e
 a API assume o papel restrito `sysap_api`. Nao ha vinculo com Supabase remoto.
 
+## Bootstrap do administrador local e caixa de e-mail de testes
+
+Com o Supabase local em execucao (`pnpm db:start` e `pnpm db:env`), crie uma
+organizacao e um administrador (`owner`) ficticio local executando o assistente
+interativo:
+
+```sh
+pnpm bootstrap:owner
+```
+
+O comando solicita interativamente nome da organizacao, fuso horario (padrao
+`America/Fortaleza`), nome completo, e-mail, celular em formato E.164 (ex.:
+`+5585999990001`) e senha forte (minimo de 15 caracteres, 4 numeros e 2 simbolos
+especiais), exibindo ao final a matricula de 10 digitos gerada para o `owner`
+(sem registrar a senha nos logs). Caso ja exista uma organizacao provisionada no
+banco local, a matricula e a organizacao permanecem registradas em
+`app.login_enrollments` e `app.organizations`.
+
+A caixa de e-mail de testes local (Inbucket/Mailpit do Supabase local) fica
+disponivel em:
+
+- Interface Web da caixa de e-mail local: `http://127.0.0.1:54324`
+- Porta SMTP local usada pela API e pelo Supabase Auth: `127.0.0.1:54325`
+
+Todos os e-mails de matricula, OTP de ativacao e OTP de recuperacao de senha sao
+entregues exclusivamente nessa caixa local em desenvolvimento.
+
 ## API
 
 - `GET http://127.0.0.1:8080/healthz`: processo ativo, independente do banco;
-- `GET http://127.0.0.1:8080/readyz`: 200 com banco disponivel, 503 sem banco.
+- `GET http://127.0.0.1:8080/readyz`: 200 com banco disponivel, 503 sem banco;
+- Endpoints `/v1/*` de autenticacao, sessao, MFA, recuperacao de senha,
+  identidade (`/v1/me`), turmas ativas e convites/ativacao de atletas conforme
+  documentado em `contracts/openapi/openapi.yaml`.
 
 As respostas sao JSON sem cache, possuem request ID gerado pelo servidor e nao
 exibem erro PostgreSQL nem detalhes de conexao.
 
 ## Web
 
-O painel responsivo e voltado a Artur/treinador. Ele consulta a API somente no
-servidor, preserva a interface demonstrativa quando API ou banco falham e nao
-envia `SYSAP_API_BASE_URL` ao navegador.
+O painel responsivo e as telas de autenticacao (`/login`, `/verificar-identidade`,
+`/ativar`, `/recuperar-acesso` e `/admin/atletas/novo`) conversam com a API Go
+somente por rotas BFF no servidor Next.js, mantendo tokens em cookies `HttpOnly`
+e sem enviar `SYSAP_API_BASE_URL` ou chaves do Supabase ao navegador.
 
 ## Testes e gates
 
@@ -150,10 +220,9 @@ tudo mesmo em falha.
 
 ## OpenAPI
 
-O contrato local esta em `contracts/openapi/openapi.yaml`. `/healthz` e
-`/readyz` sao os unicos endpoints implementados; os contratos de identidade sob
-`/v1` estao marcados como planejados pela Subfase 2A e ainda nao representam
-funcionalidade disponivel:
+O contrato local esta em `contracts/openapi/openapi.yaml`. Os endpoints
+implementados estao marcados com `x-sysap-implementation-status: implemented` e
+os endpoints futuros permanecem com `x-sysap-implementation-status: planned`:
 
 ```sh
 pnpm openapi:lint
@@ -170,7 +239,7 @@ e pode conter credencial exclusivamente local; ele nunca e carregado com
 `source` ou `eval`.
 
 Segredos de producao pertencem a um gerenciador de segredos, nunca a arquivos
-versionados. A arquitetura da Fase 2 nao distribui configuracao ou publishable
+versionados. A arquitetura do SysAP nao distribui configuracao ou publishable
 key do Supabase aos clientes: Web/mobile autenticam somente pela API Go.
 `service_role`, secret key, credencial Twilio, senha e URL do banco jamais podem
 entrar no browser, mobile ou Git.
@@ -183,7 +252,13 @@ Variaveis usadas nesta fase:
 - `SYSAP_TEST_DATABASE_URL` somente nos testes integrados;
 - `SYSAP_SHUTDOWN_TIMEOUT`;
 - `SYSAP_DATABASE_PING_TIMEOUT`;
-- `SYSAP_API_BASE_URL` somente no servidor Next.js.
+- `SYSAP_SUPABASE_AUTH_URL`, `SYSAP_SUPABASE_SERVICE_ROLE_KEY`,
+  `SYSAP_AUTH_JWT_ISSUER`, `SYSAP_AUTH_JWT_AUDIENCE` e `SYSAP_AUTH_JWKS_URL`
+  somente na API Go / bootstrap administrativo;
+- `SYSAP_OTP_PEPPER`, `SYSAP_LOGIN_RATE_LIMIT_SECRET` e
+  `SYSAP_PASSWORD_RECOVERY_PEPPER` somente na API Go;
+- `SYSAP_SMTP_HOST` e `SYSAP_SMTP_PORT` para entrega SMTP local (Inbucket) na API Go;
+- `SYSAP_API_BASE_URL` e `SYSAP_WEB_ORIGIN` somente no servidor Next.js.
 
 ## Politica de segredos
 
@@ -213,17 +288,43 @@ Nunca use `chmod 666` no socket, nao execute o SysAP diariamente com `sudo`, nao
 desabilite AppArmor permanentemente, nao exponha Docker TCP sem TLS e nao copie
 credenciais para o Git.
 
-## Roadmap e limites honestos
+## Roadmap canônico e limites honestos
 
-A proxima fase tratara identidade, organizacao e primeiro atleta como um corte
-vertical separado. Turmas, presencas, prontidao real e feedback virao depois.
-GPS sera importado apenas apos o treino; nenhum parser de fabricante sera criado
-sem arquivo real e documentacao. Health Connect e HealthKit virao com
-consentimento granular por adapters Kotlin/Swift do app Flutter. Nao ha
-rastreamento ao vivo nem app de smartwatch no MVP.
+O planejamento do produto segue o roadmap oficial em 4 fases:
 
-Prontidao e carga sao informacoes de apoio ao treinador, nao diagnostico medico
-nem previsao de lesao. O SysAP nao infere gol, passe, assistencia, toque na bola
-ou xG a partir de GPS.
+1. **Fase 1 — Fundação, Identidade e Acesso** *(Estado: fluxo principal homologado manualmente pelo usuário; recuperação presencial de senha e integração automatizada em banco isolado pendentes)*:
+   - Infraestrutura técnica e banco de dados isolado com RLS forçada;
+   - API Go e Supabase Auth;
+   - Matrícula canônica de 10 dígitos gerada em `America/Fortaleza`;
+   - Login com identificação de papéis e elevação MFA AAL2 obrigatória para administradores;
+   - Ativação presencial e remota com códigos efêmeros;
+   - Recuperação de senha sem enumeração de contas e com revogação de sessões;
+   - Fluxo mínimo funcional de criação de turmas e convites de atletas.
+2. **Fase 2 — Operação da Academia** *(Próxima fase prioritária)*:
+   - Gestão operacional completa de atletas e elenco;
+   - Gestão de turmas e horários de treinamento;
+   - Gestão de treinadores e equipe técnica;
+   - Cadastro e vínculo de responsáveis legais;
+   - Sessões de treinamento e controle de presença;
+   - Operações e cadastros administrativos diretamente pelo painel web.
+3. **Fase 3 — Gestão Financeira**:
+   - Mensalidades, planos e assinaturas;
+   - Registro de pagamentos e liquidação de parcelas;
+   - Cobranças e controle de inadimplência;
+   - Competências financeiras e relatórios analíticos de receita.
+4. **Fase 4 — Estabilização e Lançamento**:
+   - Homologação final integrada de ponta a ponta;
+   - Auditorias completas de segurança e conformidade;
+   - Documentação operacional e manuais de uso;
+   - Implantação e preparação operacional para lançamento.
 
-Uma licenca para distribuicao ainda nao foi decidida; nenhuma foi presumida.
+### Evolução posterior (após o núcleo operacional e financeiro)
+
+As integrações esportivas avançadas estão formalmente postergadas para uma evolução posterior:
+- GPS e vestíveis serão importados apenas após o treino em lote (não há rastreamento ao vivo no MVP);
+- Nenhum parser de fabricante de colete GPS será implementado sem arquivos reais e documentação oficial;
+- Health Connect e HealthKit virão com consentimento granular e adapters nativos Kotlin/Swift no app mobile Flutter;
+- O SysAP não infere gol, passe, assistência, toque na bola ou xG a partir de GPS;
+- Prontidão e carga são métricas de apoio ao treinador, nunca diagnóstico médico ou previsão de lesão.
+
+Uma licença para distribuição ainda não foi decidida; nenhuma foi presumida.
