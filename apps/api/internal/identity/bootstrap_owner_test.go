@@ -43,11 +43,19 @@ func setupBootstrapTest(t *testing.T) (*database.Pool, *pgxpool.Pool, func()) {
 	}
 
 	teardown := func() {
-		adminPool.Exec(ctx, "delete from app.identity_repair_tasks")
-		adminPool.Exec(ctx, "delete from app.login_enrollments")
-		adminPool.Exec(ctx, "delete from app.organization_memberships")
-		adminPool.Exec(ctx, "delete from app.profiles")
-		adminPool.Exec(ctx, "delete from app.organizations")
+		testOrgNames := []string{"Test Bootstrap Org", "Test Fail Org", "Test Repair Org"}
+		testEmails := []string{"arthur@example.test", "arthur_fail@example.test", "arthur_repair@example.test"}
+		if tx, err := adminPool.Begin(ctx); err == nil {
+			_, _ = tx.Exec(ctx, "set local session_replication_role = replica")
+			_, _ = tx.Exec(ctx, "delete from app.identity_repair_tasks")
+			_, _ = tx.Exec(ctx, "delete from app.login_enrollments where organization_id in (select id from app.organizations where name = any($1::text[]))", testOrgNames)
+			_, _ = tx.Exec(ctx, "delete from app.training_groups where organization_id in (select id from app.organizations where name = any($1::text[]))", testOrgNames)
+			_, _ = tx.Exec(ctx, "delete from app.organization_memberships where organization_id in (select id from app.organizations where name = any($1::text[]))", testOrgNames)
+			_, _ = tx.Exec(ctx, "delete from app.profiles where auth_user_id in (select id from auth.users where email = any($1::text[]))", testEmails)
+			_, _ = tx.Exec(ctx, "delete from app.organizations where name = any($1::text[])", testOrgNames)
+			_, _ = tx.Exec(ctx, "delete from auth.users where email = any($1::text[])", testEmails)
+			_ = tx.Commit(ctx)
+		}
 		adminPool.Close()
 		pool.Close()
 	}
@@ -102,6 +110,10 @@ func TestBootstrapOwnerSuccessAndConflict(t *testing.T) {
 	}
 	if timezone != "America/Fortaleza" {
 		t.Errorf("expected timezone America/Fortaleza, got %s", timezone)
+	}
+	var initialGroups int
+	if err := adminPool.QueryRow(ctx, "select count(*) from app.training_groups where organization_id = $1", orgID).Scan(&initialGroups); err != nil || initialGroups != 0 {
+		t.Fatal("bootstrap must not create training groups")
 	}
 
 	var role string

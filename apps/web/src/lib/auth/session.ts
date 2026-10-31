@@ -84,7 +84,11 @@ export async function requireSession(redirectTo = "/login") {
     // But typically clearing cookies happens when a request actually fails or in middleware.
     // We'll clear them just in case they are invalid.
     if (session.status === "unauthenticated" && (session.reason === "expired" || session.reason === "revoked")) {
-      await clearAuthCookies();
+      try {
+        await clearAuthCookies();
+      } catch {
+        // In Server Components, mutating cookies throws; ignore and proceed to redirect.
+      }
     }
     
     // Redirect to login page

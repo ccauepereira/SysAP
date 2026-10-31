@@ -30,6 +30,25 @@ export function readDatabasePort(configPath) {
   throw new Error("database port is not configured");
 }
 
+export function readLocalSmtpPort(configPath) {
+  const contents = readFileSync(configPath, "utf8");
+  let inMailSection = false;
+  for (const line of contents.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      inMailSection = trimmed === "[inbucket]";
+      continue;
+    }
+    const match = inMailSection && /^smtp_port\s*=\s*([0-9]+)\s*$/.exec(trimmed);
+    if (match) {
+      const port = Number.parseInt(match[1], 10);
+      if (port > 0 && port <= 65535) return port;
+      break;
+    }
+  }
+  throw new Error("local SMTP port is not configured");
+}
+
 export function validateLocalDatabaseURL(input, expectedPort) {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error("database URL is empty");
@@ -72,6 +91,9 @@ export function validateLocalDatabaseURL(input, expectedPort) {
   }
   if (parsed.hash !== "") {
     throw new Error("database URL fragment is not allowed");
+  }
+  if (["host", "hostaddr", "service", "servicefile"].some((key) => parsed.searchParams.has(key))) {
+    throw new Error("database URL host overrides are not allowed");
   }
 
   const decodedUsername = decodeComponent(parsed.username);

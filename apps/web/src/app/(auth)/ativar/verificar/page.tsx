@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Confirmar ativação" };
 export default function ActivationVerificationPage() {
   return (
     <AuthShell
-      description="Digite o código de seis dígitos enviado por e-mail."
+      description="Digite o código temporário de seis dígitos."
       progress={{ current: 2, total: 3 }}
       title="Confirme seu acesso"
     >

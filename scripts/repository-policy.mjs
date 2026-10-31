@@ -28,6 +28,7 @@ const approvedActions = new Map([
   ["actions/setup-node", { sha: "49933ea5288caeca8642d1e84afbd3f7d6820020", tag: "v4.4.0" }],
   ["actions/setup-go", { sha: "d35c59abb061a4a6fb18e82ac0862c26744d6ab5", tag: "v5.5.0" }],
   ["pnpm/action-setup", { sha: "7088e561eb65bb68695d245aa206f005ef30921d", tag: "v4.1.0" }],
+  ["subosito/flutter-action", { sha: "e938fdf56512cc96ef2f93601a5a40bde3801046", tag: "v2.19.0" }],
 ]);
 
 export function validatePackagePolicy(rootPackage, webPackage, workspaceText, goModuleText) {
@@ -70,7 +71,7 @@ export function validatePackagePolicy(rootPackage, webPackage, workspaceText, go
   return errors;
 }
 
-export function validateWorkflowText(workflow) {
+export function validateWorkflowText(workflow, requirePush = true) {
   const errors = [];
   for (const forbidden of [
     [/(^|\n)\s*pull_request_target\s*:/, "pull_request_target proibido"],
@@ -86,7 +87,7 @@ export function validateWorkflowText(workflow) {
     }
   }
   for (const required of [
-    "push:",
+    ...(requirePush ? ["push:"] : []),
     "pull_request:",
     "workflow_dispatch:",
     "permissions:\n  contents: read",
@@ -148,6 +149,10 @@ async function main() {
     ...validateWorkflowText(workflow),
     ...validateRepositoryPaths(files),
   ];
+  for (const file of files.filter((file) => file.startsWith(".github/workflows/") && /\.ya?ml$/.test(file) && file !== ".github/workflows/ci.yml")) {
+    const text = await readFile(path.join(root, file), "utf8");
+    errors.push(...validateWorkflowText(text, false).map((error) => `${file}: ${error}`));
+  }
   if (errors.length > 0) {
     throw new Error(errors.join("; "));
   }

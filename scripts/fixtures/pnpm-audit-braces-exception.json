@@ -1,0 +1,30 @@
+{
+  "advisories": {
+    "1240992": {
+      "findings": [
+        {
+          "version": "3.0.3",
+          "paths": [
+            "apps__web>eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1240992,
+      "module_name": "braces",
+      "vulnerable_versions": "<=3.0.3",
+      "patched_versions": ">=3.0.4",
+      "severity": "high",
+      "github_advisory_id": "GHSA-vfj7-8cjw-p6xm"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "moderate": 0,
+      "high": 1,
+      "critical": 0
+    }
+  }
+}

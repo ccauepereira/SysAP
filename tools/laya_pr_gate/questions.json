@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "mode": "advisory",
+  "questions": [
+    {
+      "id": "authz",
+      "when_paths": ["apps/api/", "infra/supabase/", "contracts/openapi/"],
+      "question": "A alteração valida perfil, organização, membership e sessão no estado autoritativo, sem confiar somente no cliente ou JWT?"
+    },
+    {
+      "id": "sensitive-data",
+      "when_paths": ["apps/", "contracts/", "docs/", "infra/"],
+      "question": "O diff evita expor senha, token, OTP, proof, segredo, matrícula, contato, IP bruto, DSN ou erro interno?"
+    },
+    {
+      "id": "database",
+      "when_paths": ["infra/supabase/migrations/"],
+      "question": "A migration é forward-only, mantém RLS/grants mínimos e evita USING (true) ou WITH CHECK (true)?"
+    },
+    {
+      "id": "client-tokens",
+      "when_paths": ["apps/web/", "apps/mobile/"],
+      "question": "O cliente mantém tokens somente no mecanismo seguro apropriado e não implementa autorização local?"
+    },
+    {
+      "id": "external-boundary",
+      "when_paths": ["apps/api/", "apps/web/", "apps/mobile/"],
+      "question": "Chamadas externas continuam atrás de adaptadores testáveis, sem fallback silencioso e sem dados reais em testes?"
+    },
+    {
+      "id": "ci",
+      "when_paths": [".github/workflows/", "package.json", "scripts/"],
+      "question": "O workflow executa comandos existentes, evita segredos em logs e preserva permissões mínimas?"
+    }
+  ],
+  "signals": [
+    {
+      "id": "possible-secret-assignment",
+      "when_paths": ["apps/api/", "apps/web/", "apps/mobile/", ".github/workflows/", "scripts/"],
+      "pattern": "(?i)(api[_-]?key|secret|token|password)\\s*[:=]\\s*['\\\"][^'\\\"]+",
+      "message": "Possível valor sensível atribuído no diff; revisar manualmente."
+    },
+    {
+      "id": "broad-rls-policy",
+      "when_paths": ["infra/supabase/migrations/"],
+      "pattern": "(?i)(using|with\\s+check)\\s*\\(\\s*true\\s*\\)",
+      "message": "Policy RLS aparentemente ampla no diff; revisar manualmente."
+    },
+    {
+      "id": "browser-token-storage",
+      "when_paths": ["apps/web/"],
+      "pattern": "(?i)(localStorage|sessionStorage).{0,120}(token|refresh)",
+      "message": "Possível armazenamento de token no browser; revisar manualmente."
+    }
+  ]
+}

@@ -6,6 +6,8 @@ import RecoveryPage from "@/app/(auth)/recuperar-acesso/page";
 import RecoveryVerificationPage from "@/app/(auth)/recuperar-acesso/verificar/page";
 import IdentityVerificationPage from "@/app/(auth)/verificar-identidade/page";
 import LoginPage from "@/app/(auth)/login/page";
+import EntrarAdministradorPage from "@/app/(auth)/entrar/administrador/page";
+import EntrarAlunoPage from "@/app/(auth)/entrar/aluno/page";
 import { getSession } from "@/lib/auth/session";
 import { AuthShell } from "./auth-shell";
 import { LoginForm } from "./login-form";
@@ -92,6 +94,21 @@ describe("authentication routes", () => {
   it("does not leak PII in the recovery page", () => {
     const { container } = render(<RecoveryPage />);
     expect(container.textContent).not.toMatch(/\b\d{8,}\b|[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
+  });
+
+  it("does not render redundant profile entry buttons on login", async () => {
+    render(await LoginPage());
+    expect(screen.queryByRole("link", { name: "Entrada do administrador" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Entrada do aluno" })).toBeNull();
+  });
+
+  it("redirects legacy profile routes to /login", () => {
+    EntrarAdministradorPage();
+    expect(redirect).toHaveBeenCalledWith("/login");
+
+    redirect.mockClear();
+    EntrarAlunoPage();
+    expect(redirect).toHaveBeenCalledWith("/login");
   });
 
   it("keeps public activation routes independent from session redirects", () => {

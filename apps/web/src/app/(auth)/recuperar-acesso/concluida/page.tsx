@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CircleCheck, ShieldCheck } from "lucide-react";
-import { AuthShell, PreviewNotice, authStyles as styles } from "@/features/auth/auth-shell";
+import { AuthShell, authStyles as styles } from "@/features/auth/auth-shell";
 
 export const metadata: Metadata = { title: "Senha redefinida" };
 
 export default function RecoveryCompletePage() {
   return (
     <AuthShell
-      description="Esta é a apresentação do estado final. A recuperação real será integrada na 2G.2."
+      description="Sua senha foi atualizada e já pode ser utilizada para entrar."
       title="Senha redefinida"
     >
-      <PreviewNotice />
       <div className={styles.state}>
         <span className={styles.stateIcon}><CircleCheck aria-hidden="true" size={31} /></span>
         <p className={styles.preview}>

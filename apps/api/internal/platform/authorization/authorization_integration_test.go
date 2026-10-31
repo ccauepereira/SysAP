@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,12 +225,18 @@ func createAuthFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context) au
 	tx, _ := pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 
-	tx.Exec(ctx, "set local session_replication_role = replica")
+	exec := func(sql string, args ...any) {
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("createAuthFixture sql failed: %s: %v", sql, err)
+		}
+	}
+
+	exec("set local session_replication_role = replica")
 
 	// Orgs
-	tx.Exec(ctx, "insert into app.organizations(id, name, timezone, status) values ($1, 'Org1', 'UTC', 'active'), ($2, 'Org2', 'UTC', 'active')", f.org1, f.org2)
+	exec("insert into app.organizations(id, name, timezone, status) values ($1, 'Org1', 'UTC', 'active'), ($2, 'Org2', 'UTC', 'active')", f.org1, f.org2)
 
-	// Profiles
+	// Users and Profiles
 	profiles := []struct{ id, sub string }{
 		{f.profileOwner1, f.subjectOwner1},
 		{f.profileTrainer1, f.subjectTrainer1},
@@ -238,7 +245,8 @@ func createAuthFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context) au
 		{f.profileSuspended, f.subjectSuspended},
 	}
 	for _, p := range profiles {
-		tx.Exec(ctx, "insert into app.profiles(id, auth_user_id, full_name) values ($1, $2, 'Name')", p.id, p.sub)
+		exec("insert into auth.users(id, aud, role, email, created_at, updated_at) values ($1, 'authenticated', 'authenticated', $2, now(), now())", p.sub, "user-"+p.sub+"@example.test")
+		exec("insert into app.profiles(id, auth_user_id, full_name) values ($1, $2, 'Name')", p.id, p.sub)
 	}
 
 	// Memberships
@@ -250,7 +258,7 @@ func createAuthFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context) au
 		{f.membershipSuspended, f.org1, f.profileSuspended, "owner", "suspended"},
 	}
 	for _, m := range memberships {
-		tx.Exec(ctx, "insert into app.organization_memberships(id, organization_id, profile_id, role, status) values ($1, $2, $3, $4, $5)", m.id, m.org, m.prof, m.role, m.status)
+		exec("insert into app.organization_memberships(id, organization_id, profile_id, role, status) values ($1, $2, $3, $4, $5)", m.id, m.org, m.prof, m.role, m.status)
 	}
 
 	// Sessions
@@ -262,22 +270,27 @@ func createAuthFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context) au
 		{f.sessionSuspended, f.profileSuspended},
 	}
 	for _, s := range sessions {
-		tx.Exec(ctx, "insert into app.auth_sessions(session_id, profile_id, assurance_level) values ($1, $2, 'aal1')", s.id, s.prof)
+		exec("insert into app.auth_sessions(session_id, profile_id, assurance_level) values ($1, $2, 'aal1')", s.id, s.prof)
 	}
 
 	// Athletes
+	enrReplacer := strings.NewReplacer("a", "0", "b", "1", "c", "2", "d", "3", "e", "4", "f", "5", "-", "")
+	enr1 := enrReplacer.Replace(f.athlete1)[:10]
+	enr2 := enrReplacer.Replace(f.athlete2)[:10]
 	athletes := []struct{ id, org, mem, enr string }{
-		{f.athlete1, f.org1, f.membershipAthlete1, "1111111111"},
-		{f.athlete2, f.org1, f.membershipAthlete2, "2222222222"},
+		{f.athlete1, f.org1, f.membershipAthlete1, enr1},
+		{f.athlete2, f.org1, f.membershipAthlete2, enr2},
 	}
 	for _, a := range athletes {
-		tx.Exec(ctx, "insert into app.athletes(id, organization_id, membership_id, enrollment_number) values ($1, $2, $3, $4)", a.id, a.org, a.mem, a.enr)
+		exec("insert into app.athletes(id, organization_id, membership_id, enrollment_number) values ($1, $2, $3, $4)", a.id, a.org, a.mem, a.enr)
 	}
 
 	// Assignments
-	tx.Exec(ctx, "insert into app.trainer_athlete_assignments(id, organization_id, trainer_membership_id, athlete_id, assigned_by_membership_id) values (gen_random_uuid(), $1, $2, $3, $4)", f.org1, f.membershipTrainer1, f.athlete1, f.membershipOwner1)
+	exec("insert into app.trainer_athlete_assignments(id, organization_id, trainer_membership_id, athlete_id, assigned_by_membership_id) values (gen_random_uuid(), $1, $2, $3, $4)", f.org1, f.membershipTrainer1, f.athlete1, f.membershipOwner1)
 
-	tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit fixture failed: %v", err)
+	}
 
 	return f
 }
@@ -291,6 +304,7 @@ func (f authFixture) remove(t *testing.T, pool *pgxpool.Pool, ctx context.Contex
 	tx.Exec(ctx, "delete from app.organization_memberships")
 	tx.Exec(ctx, "delete from app.profiles")
 	tx.Exec(ctx, "delete from app.organizations")
+	tx.Exec(ctx, "delete from auth.users where email like 'user-%@example.test'")
 	tx.Commit(ctx)
 }
 

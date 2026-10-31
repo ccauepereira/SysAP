@@ -16,6 +16,20 @@ const (
 	brevoEndpoint   = "https://api.brevo.com/v3/smtp/email"
 )
 
+// ClassifiedSendError exposes only whether delivery is definitely rejected or
+// ambiguous; provider response bodies and credentials are never retained.
+type ClassifiedSendError struct {
+	message string
+	outcome string
+}
+
+func (e ClassifiedSendError) Error() string           { return e.message }
+func (e ClassifiedSendError) DeliveryOutcome() string { return e.outcome }
+
+func sendFailure(message, outcome string) error {
+	return ClassifiedSendError{message: message, outcome: outcome}
+}
+
 type BrevoEmailProvider struct {
 	apiKey   string
 	from     string
@@ -71,7 +85,7 @@ func newBrevoEmailProvider(apiKey, from, fromName, endpoint string) (*BrevoEmail
 
 func (p *BrevoEmailProvider) Send(ctx context.Context, message TransactionalEmail) error {
 	if strings.TrimSpace(message.To) == "" || !strings.Contains(message.To, "@") {
-		return errors.New("email: destinatario invalido")
+		return sendFailure("email: destinatario invalido", "failed")
 	}
 
 	payload := BrevoPayload{
@@ -89,12 +103,12 @@ func (p *BrevoEmailProvider) Send(ctx context.Context, message TransactionalEmai
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return errors.New("email: erro interno ao preparar mensagem")
+		return sendFailure("email: erro interno ao preparar mensagem", "failed")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return errors.New("email: erro interno ao criar requisicao")
+		return sendFailure("email: erro interno ao criar requisicao", "failed")
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -103,40 +117,46 @@ func (p *BrevoEmailProvider) Send(ctx context.Context, message TransactionalEmai
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return errors.New("email: falha na comunicacao com provedor")
+		return sendFailure("email: falha na comunicacao com provedor", "unknown")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
-		return errors.New("email: provedor retornou redirecionamento inesperado")
+		return sendFailure("email: provedor retornou redirecionamento inesperado", "unknown")
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("email: provedor rejeitou o envio")
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusConflict {
+			return sendFailure("email: provedor retornou resultado ambiguo", "unknown")
+		}
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return sendFailure("email: provedor rejeitou o envio", "failed")
+		}
+		return sendFailure("email: provedor rejeitou o envio", "unknown")
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "application/json") {
-		return errors.New("email: provedor retornou tipo de conteudo inesperado")
+		return sendFailure("email: provedor retornou tipo de conteudo inesperado", "unknown")
 	}
 
 	limitedReader := io.LimitReader(resp.Body, maxResponseSize+1)
 	respBody, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return errors.New("email: falha ao ler resposta do provedor")
+		return sendFailure("email: falha ao ler resposta do provedor", "unknown")
 	}
 
 	if len(respBody) > maxResponseSize {
-		return errors.New("email: resposta do provedor excede limite de tamanho")
+		return sendFailure("email: resposta do provedor excede limite de tamanho", "unknown")
 	}
 
 	if len(respBody) == 0 {
-		return errors.New("email: provedor retornou resposta vazia")
+		return sendFailure("email: provedor retornou resposta vazia", "unknown")
 	}
 
 	var jsonResp map[string]interface{}
 	if err := json.Unmarshal(respBody, &jsonResp); err != nil {
-		return errors.New("email: provedor retornou json invalido")
+		return sendFailure("email: provedor retornou json invalido", "unknown")
 	}
 
 	return nil

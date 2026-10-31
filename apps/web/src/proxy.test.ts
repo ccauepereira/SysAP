@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { proxy } from "./proxy";
 
@@ -10,7 +10,19 @@ function request(path: string, cookie?: string) {
 }
 
 describe("optimistic protected-route proxy", () => {
-  it.each(["/", "/admin/atletas/novo", "/atleta", "/atletas", "/treinos/hoje", "/alertas"]) (
+  afterEach(() => vi.unstubAllEnvs());
+  it("blocks APIs in explicit local demo without bypassing protected routes", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SYSAP_LOCAL_DEMO", "1");
+    expect(proxy(request("/api/auth/login")).status).toBe(404);
+    expect(proxy(request("/atletas")).status).toBe(307);
+    expect(proxy(new NextRequest("http://localhost:3000/demonstracao", { headers: { host: "localhost:3000" } })).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost:3000/demonstracao", { headers: { host: "example.test" } })).status).toBe(404);
+    vi.stubEnv("NODE_ENV", "production");
+    expect(proxy(request("/api/auth/login")).status).toBe(200);
+    expect(proxy(request("/demonstracao")).status).toBe(404);
+  });
+  it.each(["/", "/admin/atletas/novo", "/atleta", "/atletas", "/treinos/hoje", "/financeiro", "/alertas"]) (
     "redirects %s without an access cookie",
     (path) => {
       const response = proxy(request(path));

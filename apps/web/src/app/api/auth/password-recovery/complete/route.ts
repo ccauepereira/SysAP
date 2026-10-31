@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const response = await fetch(`${apiUrl}/v1/auth/password-recovery/complete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: body.password, password_confirmation: body.password_confirmation, recovery_proof: proof }),
+      body: JSON.stringify({ proof, password: body.password }),
     });
     
     if (!response.ok) return NextResponse.json({ error: "failed" }, { status: response.status });

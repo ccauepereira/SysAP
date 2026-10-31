@@ -49,9 +49,13 @@ export function LoginForm() {
       });
 
       if (response.ok) {
-        const result = (await response.json()) as { role?: string };
+        const result = (await response.json()) as { role?: string; aal?: string };
         form.reset();
-        router.replace(result.role === "athlete" ? "/atleta" : "/");
+        if (result.role === "owner" && result.aal === "aal1") {
+          router.replace("/verificar-identidade");
+        } else {
+          router.replace(result.role === "athlete" ? "/atleta" : "/");
+        }
         router.refresh();
         return;
       }
@@ -131,7 +135,7 @@ export function LoginForm() {
       <nav aria-label="Outras formas de acesso" className={styles.links}>
         <Link className={styles.textLink} href="/ativar">
           <UserRoundPlus aria-hidden="true" size={17} />
-          Ativar minha conta
+          Criar conta — tenho uma matrícula (ativar minha conta)
         </Link>
         <Link className={styles.textLink} href="/recuperar-acesso">
           <KeyRound aria-hidden="true" size={17} />

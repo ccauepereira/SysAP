@@ -28,7 +28,7 @@ enabled = false
 port = 54323
 
 [inbucket]
-enabled = false
+enabled = true
 port = 54324
 smtp_port = 54325
 pop3_port = 54326
@@ -42,6 +42,23 @@ site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = []
 enable_signup = false
 enable_anonymous_sign_ins = false
+
+[auth.email]
+# Maps to GOTRUE_EXTERNAL_EMAIL_ENABLED in Supabase CLI so admin-provisioned
+# accounts can authenticate and recover passwords; public signup remains blocked
+# globally by [auth].enable_signup = false (GOTRUE_DISABLE_SIGNUP=true).
+enable_signup = true
+max_frequency = "1s"
+otp_length = 6
+otp_expiry = 3600
+
+[auth.email.template.recovery]
+subject = "Código de recuperação de acesso — SysAP"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
 
 [auth.sms]
 enable_signup = false

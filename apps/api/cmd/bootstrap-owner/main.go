@@ -80,8 +80,8 @@ func validateEnvironment() error {
 	if err != nil {
 		return fmt.Errorf("invalid database URL: %w", err)
 	}
-	if host := u.Hostname(); host != "" && !isLoopbackHost(host) {
-		return fmt.Errorf("database host must be a loopback host (got: %s)", host)
+	if (u.Scheme != "postgres" && u.Scheme != "postgresql") || !isLoopbackHost(u.Hostname()) || u.Query().Has("host") || u.Query().Has("hostaddr") || u.Query().Has("service") {
+		return errors.New("database URL must identify a loopback PostgreSQL host")
 	}
 
 	authURL := os.Getenv("SYSAP_SUPABASE_AUTH_URL")
@@ -92,10 +92,8 @@ func validateEnvironment() error {
 	if err != nil {
 		return fmt.Errorf("invalid Auth URL: %w", err)
 	}
-	if uAuth.Scheme != "https" {
-		if uAuth.Scheme != "http" || !isLoopbackHost(uAuth.Hostname()) {
-			return errors.New("Auth URL must use HTTPS outside local loopback development")
-		}
+	if (uAuth.Scheme != "http" && uAuth.Scheme != "https") || !isLoopbackHost(uAuth.Hostname()) {
+		return errors.New("Auth URL must use HTTP or HTTPS on a loopback host")
 	}
 
 	roleKey := os.Getenv("SYSAP_SUPABASE_SERVICE_ROLE_KEY")

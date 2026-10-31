@@ -106,7 +106,9 @@ paths:
       summary: Pre-cadastrar atleta e iniciar ativacao
       description: >-
         Cria um convite na organizacao selecionada por organization_id.
-        Requer token de Owner.
+        Requer Owner ativo com AAL2. Perfil, membership e convite ficam
+        pendentes de ativacao antes da entrega; o estado de entrega e
+        independente e uma falha nao desfaz o cadastro.
       x-sysap-implementation-status: implemented
       parameters:
         - name: organization_id
@@ -157,6 +159,104 @@ paths:
           $ref: "#/components/responses/ResourceConflict"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/organizations/{organization_id}/athlete-invitations/{invitation_id}/manual-activation:
+    post:
+      operationId: issueManualActivation
+      tags:
+        - Convites de atleta
+      summary: Emitir código de ativação manual
+      description: Requer owner ativo com MFA; um novo código invalida o anterior.
+      x-sysap-implementation-status: implemented
+      parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: invitation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/OrganizationContext"
+      responses:
+        "201":
+          description: Código exibido uma vez para entrega ao aluno.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_number, code, expires_at]
+                properties:
+                  enrollment_number:
+                    $ref: "#/components/schemas/EnrollmentNumber"
+                  code:
+                    $ref: "#/components/schemas/OTPInput"
+                  expires_at:
+                    type: string
+                    format: date-time
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/AccessDenied"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/organizations/{organization_id}/athletes/{athlete_profile_id}/manual-recovery:
+    post:
+      operationId: issueManualPasswordRecovery
+      tags:
+        - Convites de atleta
+      summary: Emitir código de recuperação presencial de acesso
+      description: Requer owner ativo com MFA; valida identidade presencial e invalida códigos anteriores do atleta.
+      x-sysap-implementation-status: implemented
+      parameters:
+        - name: organization_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: athlete_profile_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/OrganizationContext"
+      responses:
+        "201":
+          description: Código temporário de recuperação exibido apenas na resposta protegida de emissão.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_number, code, expires_at]
+                properties:
+                  enrollment_number:
+                    $ref: "#/components/schemas/EnrollmentNumber"
+                  code:
+                    $ref: "#/components/schemas/OTPInput"
+                  expires_at:
+                    type: string
+                    format: date-time
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/AccessDenied"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+        "409":
+          $ref: "#/components/responses/ResourceConflict"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /v1/activation/start:
@@ -330,6 +430,30 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /v1/activation/manual/verify:
+    post:
+      operationId: verifyManualActivation
+      tags: [Convites de atleta]
+      summary: Confirmar código de ativação manual
+      description: Valida o código temporário da matrícula e emite uma prova de uso único.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivationVerifyRequest" }
+      responses:
+        "200":
+          description: Prova curta de ativação.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivationProofResponse" }
+        "401": { $ref: "#/components/responses/InvalidCredentials" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/auth/login:
     post:
       operationId: login
@@ -475,17 +599,29 @@ paths:
       operationId: resendAthleteInvitation
       tags:
         - Convites de atleta
-      summary: Solicitar novo OTP de ativacao
+      summary: Reenviar matrícula de convite pendente
       description: >-
-        Aceita novo envio somente para convite previamente provisionado,
-        visivel na organizacao e em estado compativel. A resposta nao revela
-        telefone completo, fornecedor ou resultado individual da entrega.
-      x-sysap-implementation-status: planned
+        Reenvia a matrícula de um convite pendente somente após rejeição
+        definitiva da tentativa anterior. Resultados ambíguos não podem ser
+        repetidos automaticamente. Reenvios têm intervalo mínimo de 60
+        segundos e limite de três em 24 horas. A resposta nunca revela contato,
+        matrícula ou erro do fornecedor.
+      x-sysap-implementation-status: implemented
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/OrganizationContext"
       responses:
         "202":
-          $ref: "#/components/responses/CommandAccepted"
+          description: Convite mantido pendente; tentativa de entrega registrada.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AthleteInvitationResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -503,6 +639,37 @@ paths:
   /v1/athlete-invitations/{invitation_id}:
     parameters:
       - $ref: "#/components/parameters/InvitationID"
+      - $ref: "#/components/parameters/OrganizationContext"
+    get:
+      operationId: getAthleteInvitationDeliveryStatus
+      tags:
+        - Convites de atleta
+      summary: Consultar estado seguro de um convite
+      description: >-
+        Consulta estado de ativação e entrega do próprio tenant. Identificador
+        ausente ou de outra organização produz a mesma resposta; contatos,
+        matrícula e informações de provider não são retornados.
+      x-sysap-implementation-status: implemented
+      responses:
+        "200":
+          description: Estado atual do convite.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AthleteInvitationResponse"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/AccessDenied"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       operationId: cancelAthleteInvitation
       tags:
@@ -639,6 +806,36 @@ paths:
       description: >-
         O OTP é verificado somente pelo adaptador do Supabase Auth. O resultado
         positivo emite uma proof aleatória de uso único, persistida apenas como HMAC.
+      x-sysap-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRecoveryVerifyRequest"
+      responses:
+        "200":
+          description: Proof opaca para a conclusão imediata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordRecoveryProofResponse"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/auth/password-recovery/manual/verify:
+    post:
+      operationId: verifyManualPasswordRecovery
+      tags: [Autenticacao]
+      summary: Verificar código temporário de recuperação presencial
+      description: >-
+        Verifica o código de 6 dígitos gerado presencialmente pelo administrador.
+        Emite a mesma proof opaca para a conclusão por /v1/auth/password-recovery/complete.
       x-sysap-implementation-status: implemented
       security: []
       requestBody:
@@ -1097,6 +1294,17 @@ components:
                   code: service_unavailable
                   message: service is temporarily unavailable
                   request_id: 0123456789abcdef0123456789abcdef
+    InternalError:
+      description: Erro interno sem detalhes de implementação.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   headers:
     CacheControl:
       description: Impede cache das respostas de saude e prontidao.
@@ -1339,8 +1547,8 @@ components:
           enum: [goalkeeper, defender, midfielder, forward]
         enrollment_delivery_channel:
           type: string
-          enum: [email]
-          description: "Unico canal ativo nesta homologacao."
+          enum: [email, manual]
+          description: "Canal de entrega da matrícula: e-mail ou presencial (manual)."
     AthleteInvitationResponse:
       type: object
       additionalProperties: false
@@ -1350,22 +1558,29 @@ components:
         - status
         - expires_at
         - delivery_channel
+        - delivery_status
       properties:
         invitation_id:
           $ref: "#/components/schemas/UUID"
         profile_id:
           $ref: "#/components/schemas/UUID"
+        enrollment_number:
+          $ref: "#/components/schemas/EnrollmentNumber"
         status:
           type: string
-          enum: [pending_activation]
-          description: O atleta deve ativar a conta com senha e OTP.
+          enum: [pending_activation, activated, expired]
+          description: Estado de ativação do convite, independente da entrega.
         expires_at:
           type: string
           format: date-time
           description: Data de expiração do convite.
         delivery_channel:
           type: string
-          enum: [email]
+          enum: [email, sms, manual]
+        delivery_status:
+          type: string
+          enum: [sending, sent, failed, unknown, not_applicable]
+          description: Estado seguro da tentativa; unknown não permite reenvio automático.
     ActivationStartRequest:
       type: object
       additionalProperties: false

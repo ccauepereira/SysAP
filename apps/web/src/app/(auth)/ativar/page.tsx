@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Ativar conta" };
 export default function ActivationPage() {
   return (
     <AuthShell
-      description="Informe sua matrícula para receber o primeiro código de confirmação."
+      description="Informe sua matrícula e escolha como recebeu o código de confirmação."
       progress={{ current: 1, total: 3 }}
       title="Ative sua conta"
     >

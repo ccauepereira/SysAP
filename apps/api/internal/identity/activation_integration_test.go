@@ -29,6 +29,9 @@ type mockOTPProvider struct {
 }
 
 func (m *mockOTPProvider) IsExternal() bool { return m.isExternal }
+func (m *mockOTPProvider) SupportsChannel(channel string) bool {
+	return channel == "email" || channel == "sms"
+}
 func (m *mockOTPProvider) Start(ctx context.Context, phone, code string) error {
 	if m.startHook != nil {
 		return m.startHook(ctx, phone)
@@ -105,6 +108,8 @@ func setupActivationIntegrationTest(t *testing.T) (*database.Pool, func(), strin
 		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'owner', 'active')", []any{uuid.New(), orgID, inviterProfileID}},
 		{"insert into app.athlete_profiles (id, organization_id, enrollment_number, display_name, phone_e164, email, status) values ($1, $2, $3, 'Test Athlete', '+15555550101', 'athlete@example.test', 'pending_activation')", []any{profileID, orgID, enrollment}},
 		{"insert into app.activation_invitations (id, organization_id, profile_id, role, status, invited_by_profile_id, expires_at) values ($1, $2, $3, 'athlete', 'pending', $4, $5)", []any{invitationID, orgID, profileID, inviterProfileID, time.Now().Add(7 * 24 * time.Hour)}},
+		{"insert into app.profiles (id, full_name) values ($1, 'Test Athlete')", []any{profileID}},
+		{"insert into app.organization_memberships (id, organization_id, profile_id, role, status) values ($1, $2, $3, 'athlete', 'pending_activation')", []any{uuid.New(), orgID, profileID}},
 	}
 
 	for _, q := range queries {
@@ -114,17 +119,22 @@ func setupActivationIntegrationTest(t *testing.T) (*database.Pool, func(), strin
 	}
 
 	teardown := func() {
-		adminPool.Exec(ctx, "delete from app.activation_challenges")
-		adminPool.Exec(ctx, "delete from app.identity_repair_tasks")
-		adminPool.Exec(ctx, "delete from app.auth_sessions")
-		adminPool.Exec(ctx, "delete from app.security_audit_events")
-		adminPool.Exec(ctx, "delete from app.login_enrollments")
-		adminPool.Exec(ctx, "delete from app.activation_invitations")
-		adminPool.Exec(ctx, "delete from app.athlete_profiles")
-		adminPool.Exec(ctx, "delete from app.organization_memberships")
-		adminPool.Exec(ctx, "delete from app.profiles")
-		adminPool.Exec(ctx, "delete from app.organizations")
-		adminPool.Exec(ctx, "delete from auth.users where id = $1", ownerAuthID)
+		if tx, err := adminPool.Begin(ctx); err == nil {
+			_, _ = tx.Exec(ctx, "set local session_replication_role = replica")
+			_, _ = tx.Exec(ctx, "delete from app.activation_challenges where athlete_profile_id = $1", profileID)
+			_, _ = tx.Exec(ctx, "delete from app.activation_proofs where athlete_profile_id = $1", profileID)
+			_, _ = tx.Exec(ctx, "delete from app.identity_repair_tasks")
+			_, _ = tx.Exec(ctx, "delete from app.auth_sessions where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.security_audit_events where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.login_enrollments where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.activation_invitations where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.athlete_profiles where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.organization_memberships where organization_id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from app.profiles where id = any($1::uuid[])", []uuid.UUID{profileID, inviterProfileID})
+			_, _ = tx.Exec(ctx, "delete from app.organizations where id = $1", orgID)
+			_, _ = tx.Exec(ctx, "delete from auth.users where id = $1 or email like 'fake-%@example.test' or email like 'fixture-%@example.test'", ownerAuthID)
+			_ = tx.Commit(ctx)
+		}
 		adminPool.Close()
 		pool.Close()
 	}
@@ -376,7 +386,7 @@ func TestActivationStartAndVerify(t *testing.T) {
 	})
 }
 
-func TestActivationRequiresSMSThenEmail(t *testing.T) {
+func TestEmailChallengeCannotBeVerifiedAsSMS(t *testing.T) {
 	pool, teardown, enrollment, _, _ := setupActivationIntegrationTest(t)
 	defer teardown()
 	now := time.Now().UTC()
@@ -386,30 +396,17 @@ func TestActivationRequiresSMSThenEmail(t *testing.T) {
 	start := httptest.NewRecorder()
 	handler.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/v1/activation/start", bytes.NewReader(startBody)))
 	if start.Code != http.StatusAccepted {
-		t.Fatalf("expected SMS start acceptance, got %d", start.Code)
+		t.Fatalf("expected email start acceptance, got %d", start.Code)
 	}
 	verifySMSBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "code": "654321"})
 	verifySMS := httptest.NewRecorder()
 	handler.ServeHTTP(verifySMS, httptest.NewRequest(http.MethodPost, "/v1/activation/verify-sms", bytes.NewReader(verifySMSBody)))
-	if verifySMS.Code != http.StatusOK {
-		t.Fatalf("expected SMS verification, got %d", verifySMS.Code)
+	if verifySMS.Code != http.StatusUnauthorized {
+		t.Fatalf("email challenge must not be accepted as SMS, got %d", verifySMS.Code)
 	}
-	var smsResult map[string]string
-	_ = json.Unmarshal(verifySMS.Body.Bytes(), &smsResult)
-	smsProof := smsResult["activation_proof"]
-	if smsProof == "" {
-		t.Fatal("expected SMS proof")
-	}
-
-	emailStartBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "sms_proof": smsProof})
-	emailStart := httptest.NewRecorder()
-	handler.ServeHTTP(emailStart, httptest.NewRequest(http.MethodPost, "/v1/activation/email/start", bytes.NewReader(emailStartBody)))
-	if emailStart.Code != http.StatusAccepted {
-		t.Fatalf("expected email start acceptance, got %d", emailStart.Code)
-	}
-	emailVerifyBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "code": "654321", "sms_proof": smsProof})
+	emailVerifyBody, _ := json.Marshal(map[string]string{"enrollment_number": enrollment, "code": "654321"})
 	emailVerify := httptest.NewRecorder()
-	handler.ServeHTTP(emailVerify, httptest.NewRequest(http.MethodPost, "/v1/activation/email/verify", bytes.NewReader(emailVerifyBody)))
+	handler.ServeHTTP(emailVerify, httptest.NewRequest(http.MethodPost, "/v1/activation/verify", bytes.NewReader(emailVerifyBody)))
 	if emailVerify.Code != http.StatusOK {
 		t.Fatalf("expected email verification, got %d", emailVerify.Code)
 	}
@@ -516,7 +513,7 @@ func TestActivationComplete(t *testing.T) {
 		if _, err := adminPool.Exec(context.Background(), `insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values ($1, 'authenticated', 'authenticated', $2, '{}'::jsonb, '{}'::jsonb, now(), now())`, conflictingAuthID, "fixture-"+conflictingAuthID.String()+"@example.test"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := adminPool.Exec(context.Background(), `insert into app.profiles (id, auth_user_id, full_name) values ($1, $2, 'Conflict')`, profileID, conflictingAuthID); err != nil {
+		if _, err := adminPool.Exec(context.Background(), `insert into app.profiles (id, auth_user_id, full_name) values ($1, $2, 'Conflict') on conflict (id) do update set auth_user_id = excluded.auth_user_id, full_name = excluded.full_name`, profileID, conflictingAuthID); err != nil {
 			t.Fatal(err)
 		}
 
