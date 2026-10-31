@@ -12,6 +12,7 @@ type PasswordFieldProps = {
   readonly name: string;
   readonly placeholder: string;
   readonly required?: boolean;
+  readonly showStrength?: boolean;
 };
 
 export function PasswordField({
@@ -22,9 +23,15 @@ export function PasswordField({
   name,
   placeholder,
   required = true,
+  showStrength = false,
 }: PasswordFieldProps) {
   const [visible, setVisible] = useState(false);
+  const [password, setPassword] = useState("");
   const errorId = `${id}-error`;
+  const strengthId = `${id}-strength`;
+  const score = Number(password.length >= 15) + Number(/[a-z]/.test(password) && /[A-Z]/.test(password)) + Number((password.match(/[0-9]/g) ?? []).length >= 4) + Number((password.match(/[^\p{L}\p{N}\s]/gu) ?? []).length >= 2);
+  const strength = score >= 4 ? "forte" : score >= 2 ? "razoável" : "fraca";
+  const describedBy = [error ? errorId : undefined, showStrength ? strengthId : undefined].filter(Boolean).join(" ");
 
   return (
     <div className={styles.field}>
@@ -34,11 +41,12 @@ export function PasswordField({
       <div className={styles.control}>
         <LockKeyhole aria-hidden="true" size={19} />
         <input
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={describedBy || undefined}
           aria-invalid={error ? "true" : undefined}
           autoComplete={autoComplete}
           id={id}
           name={name}
+          onChange={showStrength ? (event) => setPassword(event.currentTarget.value) : undefined}
           placeholder={placeholder}
           required={required}
           type={visible ? "text" : "password"}
@@ -53,6 +61,7 @@ export function PasswordField({
         </button>
       </div>
       {error ? <p className={styles.fieldError} id={errorId}>{error}</p> : null}
+      {showStrength ? <p className={styles.timer} id={strengthId} aria-live="polite">{password ? `Força estimada: ${strength}.` : "A força estimada aparecerá enquanto você digita."} Esta estimativa não garante segurança.</p> : null}
     </div>
   );
 }

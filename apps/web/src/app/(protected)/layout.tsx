@@ -7,5 +7,5 @@ export default async function ProtectedLayout({
 }: Readonly<{ children: ReactNode }>) {
   const user = await requireSession();
   if (user.role === "athlete") return <>{children}</>;
-  return <AppShell>{children}</AppShell>;
+  return <AppShell current="Atletas">{children}</AppShell>;
 }

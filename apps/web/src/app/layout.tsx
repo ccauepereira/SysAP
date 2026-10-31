@@ -7,6 +7,7 @@ import "@fontsource/barlow-condensed/600.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import "@/features/product/product.css";
 
 export const metadata: Metadata = {
   title: {

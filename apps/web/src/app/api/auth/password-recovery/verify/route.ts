@@ -18,13 +18,14 @@ export async function POST(request: NextRequest) {
     });
     
     if (!response.ok) return NextResponse.json({ error: "failed" }, { status: response.status });
-    const result = await response.json() as { recovery_proof?: string };
-    
-    if (!result.recovery_proof) return NextResponse.json({ error: "failed" }, { status: 401 });
-    
+    const result = await response.json() as { proof?: string; recovery_proof?: string };
+    const proof = result.proof ?? result.recovery_proof;
+
+    if (!proof) return NextResponse.json({ error: "failed" }, { status: 401 });
+
     const isSecure = process.env.SYSAP_COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
     const cookieStore = await cookies();
-    cookieStore.set("sysap-recovery-proof", result.recovery_proof, {
+    cookieStore.set("sysap-recovery-proof", proof, {
       httpOnly: true,
       secure: isSecure,
       sameSite: "lax",

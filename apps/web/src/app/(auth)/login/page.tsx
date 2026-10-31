@@ -4,13 +4,18 @@ import { AuthShell } from "@/features/auth/auth-shell";
 import { LoginForm } from "@/features/auth/login-form";
 import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { demoAvailable } from "@/features/demo/demo-guard";
 
 export const metadata: Metadata = { title: "Entrar" };
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
-  const session = await getSession();
-  if (session.status === "authenticated") redirect("/");
+  const demo = await demoAvailable();
+  if (!demo) {
+    const session = await getSession();
+    if (session.status === "authenticated") redirect("/");
+  }
 
   return (
     <>
@@ -20,6 +25,7 @@ export default async function LoginPage() {
         title="Bem-vindo de volta."
       >
         <LoginForm />
+        {demo ? <Link className="product-button product-button-secondary" href="/demonstracao">Explorar demonstração</Link> : null}
       </AuthShell>
     </>
   );

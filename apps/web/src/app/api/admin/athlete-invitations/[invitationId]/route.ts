@@ -17,10 +17,12 @@ function safeStatus(value: unknown) {
 }
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ invitationId: string }> }) {
-  const session = await getSession();
-  if (session.status !== "authenticated" || session.user.role !== "owner") return NextResponse.json({ error: "access_denied" }, { status: 403 });
   const token = await getAccessToken();
   if (!token) return NextResponse.json({ error: "authentication_required" }, { status: 401 });
+  const session = await getSession();
+  if (session.status === "unauthenticated") return NextResponse.json({ error: "authentication_required" }, { status: 401 });
+  if (session.status === "error") return NextResponse.json({ error: "invitation_status_unavailable" }, { status: 503 });
+  if (session.user.role !== "owner") return NextResponse.json({ error: "access_denied" }, { status: 403 });
   const { invitationId } = await context.params;
   if (!uuidPattern.test(invitationId)) return NextResponse.json({ error: "resource_not_found" }, { status: 404 });
   try {
